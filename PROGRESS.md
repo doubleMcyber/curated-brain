@@ -80,6 +80,11 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         `Erin | moved | to Vienna` from raw text → also proves **Track B is feasible here**.
         Captured as `test_live_llm_extracts_a_triple` (CB_LIVE-gated, passes in 24s).
       - [x] Offline gate green (56 passed / 3 skipped), ruff clean, Opus-4.8 reviewer PASS ×2.
+      - [x] **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`,
+        2026-06-18, reviewer PASS): stdlib-only HTTP (no new dep) behind the same protocols, with an
+        injectable `post` transport so they're offline-tested (exact wire format + L2-norm + protocol
+        conformance verified). **Lets CB + Mem0/Letta/Zep share ONE endpoint+model for a fair Track-D
+        run — and dodges the local-CPU bottleneck** (point everything at a hosted/vLLM endpoint).
       - [ ] **Live bge embedder run** — BLOCKED: HF LFS weight egress is blocked in this env
         (config downloads, weights don't; bge not pre-cached). Code+test ready; runs where egress works.
       - [ ] Remaining A scope: **logprob surprise estimator** (PRD §6 #2); wire the **real LLM into
@@ -172,10 +177,10 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 
 ## CURRENT POSITION (after 2026-06-18 session — 7 reviewed commits)
 - **DONE-criteria status: 2 of 3 met.** ✅ `pip install` works · ✅ docs (README) + CI + LICENSE
-  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (81 passed/4
+  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (85 passed/4
   skipped) on a clean tree. ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked
-  (see BLOCKERS). Since: open-domain planner backstop + schema-driven planner (improvement-plan #1)
-  + **cost accounting** for the "≤ its cost" clause — all toward D, all reviewer-verified.
+  (see BLOCKERS). Since (all reviewer-verified, toward D): open-domain backstop + schema-driven planner
+  (improvement-plan #1) + cost accounting ("≤ cost" clause) + **OpenAI-compat providers** (fair shared-endpoint run).
 - Done this session: **A** (real local providers + cassette + re-embed; live LLM verified),
   **B** (extraction implemented + wired into write path; spoon-feeding crutch removed),
   scoped **B-eval** (extraction-ON matches spoon-fed on C1/C2/C5/C6), **F core** (LICENSE/README/CI/pip).
@@ -249,8 +254,8 @@ share ONE model endpoint (fairest Track D, dodges local-CPU); **cost/token accou
 
 **Reprioritized order:** (0) de-couple planner+reader [local] *(backstop + schema-driven planner landed;
 LLM-routing/relation-autodetect + open-domain reader still open)* → (1) entity resolution + open-schema extraction [local] →
-(2) OpenAI-compat provider + cost metrics → (3) Track D harness on a capable box → (4) ANN +
-structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
+(2) ✅ OpenAI-compat provider + cost metrics **(both landed 2026-06-18)** → (3) Track D harness on a capable
+box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
 
 ## ENVIRONMENT NOTES (for resuming sessions — verified 2026-06-18)
 - Python 3.12.7; `torch` 2.5.1 with **MPS** (Apple GPU); `transformers`, `huggingface_hub`,
@@ -353,3 +358,10 @@ structured indexing + stale-scope → (5) LLM consolidation, concurrency, namesp
   Gate 81 passed/4 skipped, ruff clean. **Opus-4.8 reviewer PASS** — hand-verified every count, confirmed
   rejected-call cost-neutrality, 0-query avg guard, restore reset, determinism; consolidation exclusion
   documented (not a silent undercount); zero bugs. Branch `claude/open-domain-backstop`.
+- 2026-06-18 — Track A: **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`).
+  Stdlib-only HTTP, injectable `post` transport → offline-tested (exact wire format, L2-norm, protocol
+  conformance, drives a CuratedBrain write/query). Enables a FAIR Track-D run (CB + rivals on one
+  endpoint+model) and sidesteps local-CPU. +4 tests. Gate 85 passed/4 skipped, ruff clean. **Opus-4.8
+  reviewer PASS** — verified request bodies, zero-vector/empty-batch/float64 contract, no network/heavy-dep
+  at import, temperature=0.0 default; zero bugs (1 nitpick: bare KeyError on malformed responses).
+  Branch `claude/open-domain-backstop`.
