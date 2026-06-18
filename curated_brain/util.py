@@ -43,3 +43,40 @@ def jaccard(a: str, b: str) -> float:
     if not sa or not sb:
         return 0.0
     return len(sa & sb) / len(sa | sb)
+
+
+def normalize(s: str) -> str:
+    """Canonical form for entity/value matching (PRD §5.1 entity resolution)."""
+    return s.strip().lower()
+
+
+# --- JSON sanitization for non-finite floats --------------------------------------
+# Bi-temporal "open" intervals use float("inf"); plain json would emit the non-standard
+# token `Infinity`. We wrap non-finite floats so snapshots stay strict, byte-stable JSON.
+
+def to_jsonable(obj):
+    """Recursively replace non-finite floats with tagged dicts so json stays strict."""
+    if isinstance(obj, float):
+        if obj == float("inf"):
+            return {"__f__": "inf"}
+        if obj == float("-inf"):
+            return {"__f__": "-inf"}
+        if obj != obj:  # NaN
+            return {"__f__": "nan"}
+        return obj
+    if isinstance(obj, dict):
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_jsonable(v) for v in obj]
+    return obj
+
+
+def from_jsonable(obj):
+    """Inverse of :func:`to_jsonable`."""
+    if isinstance(obj, dict):
+        if set(obj) == {"__f__"}:
+            return {"inf": float("inf"), "-inf": float("-inf"), "nan": float("nan")}[obj["__f__"]]
+        return {k: from_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [from_jsonable(v) for v in obj]
+    return obj
