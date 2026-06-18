@@ -33,6 +33,7 @@ class EpisodicRecord:
     last_seen_ts: float = 0.0
     tier: str = "episodic"  # "episodic" | "semantic"
     supports: list[str] = field(default_factory=list)  # episode ids a semantic claim covers
+    fact_key: str | None = None  # "subject|predicate|object" link to the triple it asserts
 
 
 @dataclass
