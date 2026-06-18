@@ -130,8 +130,14 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       - [x] `CuratedBrain.metrics()`: write-decision breakdown (stored/reinforced/discarded),
         `discard_rate` (Pillar-B selectivity signal), store size, structured-fact count. Cheap
         (no snapshot), deterministic, reset on restore. Tied to real behavior in `test_observability.py`.
-      - [ ] Remaining: decision tracing/log, **cost/$ + latency accounting** (per-provider token/$),
-        budgets + backpressure, graceful provider failure/degradation.
+      - [x] **Cost/token accounting** (`metrics()["cost"]`, 2026-06-18, reviewer PASS): deterministic
+        write+query hot-path meter — embed calls/tokens, extract calls, queries, `context_tokens_served`,
+        and the headline `avg_context_tokens` (tokens served per query) for the Track-D "≤ its cost"
+        comparison. Operational (reset on restore); rejected calls cost nothing (verified). Scope:
+        consolidation re-embeds + latency intentionally unmetered (documented). Reviewer hand-verified
+        all counts; confirmed cost-neutral boundary rejects + 0-query avg guard.
+      - [ ] Remaining: decision tracing/log; per-provider **$** pricing (token→$); wall-clock latency
+        (outside the deterministic core); budgets + backpressure; graceful provider failure/degradation.
       *Bar:* dashboards/metrics emitted for a full run.
 - [~] **H. Robustness & hardening.** *(suite + boundary validation landed — reviewer PASS 2026-06-18)*
       - [x] `test_robustness.py`: seeded fuzz (unicode/control/oversized/empty) — never crashes;
@@ -166,10 +172,10 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 
 ## CURRENT POSITION (after 2026-06-18 session — 7 reviewed commits)
 - **DONE-criteria status: 2 of 3 met.** ✅ `pip install` works · ✅ docs (README) + CI + LICENSE
-  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (80 passed/4
+  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (81 passed/4
   skipped) on a clean tree. ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked
   (see BLOCKERS). Since: open-domain planner backstop + schema-driven planner (improvement-plan #1)
-  toward D — the structured tier is no longer bypassed on open-domain questions.
+  + **cost accounting** for the "≤ its cost" clause — all toward D, all reviewer-verified.
 - Done this session: **A** (real local providers + cassette + re-embed; live LLM verified),
   **B** (extraction implemented + wired into write path; spoon-feeding crutch removed),
   scoped **B-eval** (extraction-ON matches spoon-fed on C1/C2/C5/C6), **F core** (LICENSE/README/CI/pip).
@@ -341,3 +347,9 @@ structured indexing + stale-scope → (5) LLM consolidation, concurrency, namesp
   Gate 80 passed/4 skipped, ruff clean. **Opus-4.8 reviewer PASS** — diffed every harness `QueryPlan`
   with/without the vocab: **0 differences**, C1–C6 identical (1.0/1.0/.987/.906/1.0/1.0); zero bugs.
   Branch `claude/open-domain-backstop`.
+- 2026-06-18 — Track G: **cost/token accounting** in `metrics()["cost"]` (deterministic write+query
+  hot-path meter: embed calls/tokens, extract calls, queries, context_tokens_served, avg_context_tokens).
+  Fills the "≤ its cost" reporting prerequisite for Track D. +1 test (+1 restore-reset assertion).
+  Gate 81 passed/4 skipped, ruff clean. **Opus-4.8 reviewer PASS** — hand-verified every count, confirmed
+  rejected-call cost-neutrality, 0-query avg guard, restore reset, determinism; consolidation exclusion
+  documented (not a silent undercount); zero bugs. Branch `claude/open-domain-backstop`.
