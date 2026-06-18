@@ -4,7 +4,8 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-06-18 · Branch: `claude/curated-brain`
+Last updated: 2026-06-18 · Branch: `claude/open-domain-backstop` (off `main`)
+Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 
 ---
 
@@ -165,8 +166,9 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 
 ## CURRENT POSITION (after 2026-06-18 session — 7 reviewed commits)
 - **DONE-criteria status: 2 of 3 met.** ✅ `pip install` works · ✅ docs (README) + CI + LICENSE
-  · ✅ gate green (63 passed/4 skipped) on a clean `claude/curated-brain` tree.
-  ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked (see BLOCKERS).
+  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (79 passed/4
+  skipped) on a clean tree. ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked
+  (see BLOCKERS). Since: added the open-domain planner backstop (improvement-plan #1) toward D.
 - Done this session: **A** (real local providers + cassette + re-embed; live LLM verified),
   **B** (extraction implemented + wired into write path; spoon-feeding crutch removed),
   scoped **B-eval** (extraction-ON matches spoon-fed on C1/C2/C5/C6), **F core** (LICENSE/README/CI/pip).
@@ -205,6 +207,12 @@ Brain *lose* to the rivals on open-domain LongMemEval even on a capable box:
    loses. **Fix first, offline:** schema-driven planner (derive predicates from `self.structured`,
    or LLM-route the question) + a fail-soft backstop (`query` tries a structured `resolve` for any
    recognized entity even when predicate is None).
+   **[x] Fail-soft backstop DONE (2026-06-18, reviewer PASS).** `query()` now surfaces a known
+   entity's high-precision structured facts when `open_ended` (capped, reserving a vector slot);
+   `StructuredTier.predicates_for`. Reviewer instrumented the harness: backstop fires **0×** on the
+   54 synthetic probes (all carry a recognized keyword) → AC-9 unchanged (C1–C6 1.0/1.0/.987/.906/1.0/1.0).
+   **Still open:** the *schema-driven / LLM-routed* planner (the backstop only hedges; it doesn't
+   recognize the predicate) and the open-domain reader in `eval.py` (#2 below).
 2. **`eval.py` `candidates_for`/`extract_value` is a closed-set reader over `ds.people`** — it
    *cannot* score an open-domain benchmark and using it on LongMemEval is a methodological error.
    Track D must feed `Retrieval.context` to the **same shared judge LLM** used for every system
@@ -226,9 +234,10 @@ seam exists, unused); concurrency/namespacing; SQLite-index the structured tier 
 share ONE model endpoint (fairest Track D, dodges local-CPU); **cost/token accounting** in
 `metrics()` (needed for the "≤ its cost" clause); mypy/pyright + coverage in CI.
 
-**Reprioritized order:** (0) de-couple planner+reader [local] → (1) entity resolution + open-schema
-extraction [local] → (2) OpenAI-compat provider + cost metrics → (3) Track D harness on a capable
-box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
+**Reprioritized order:** (0) de-couple planner+reader [local] *(planner backstop landed; schema/LLM
+planner + open-domain reader still open)* → (1) entity resolution + open-schema extraction [local] →
+(2) OpenAI-compat provider + cost metrics → (3) Track D harness on a capable box → (4) ANN +
+structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
 
 ## ENVIRONMENT NOTES (for resuming sessions — verified 2026-06-18)
 - Python 3.12.7; `torch` 2.5.1 with **MPS** (Apple GPU); `transformers`, `huggingface_hub`,
@@ -309,3 +318,12 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
 - 2026-06-18 — Track E: complete top-level public API + 3 runnable `examples/` (2 offline,
   smoke-tested). Lazy imports verified (no torch at `import curated_brain`). Reviewer PASS.
   Gate 76 passed/4 skipped, ruff clean.
+- 2026-06-18 — Published to `github.com/doubleMcyber/curated-brain` (public, default branch `main`);
+  local branch `claude/curated-brain` renamed `main`. All 21 build commits pushed; CI workflow live.
+- 2026-06-18 — Track B/D PROVE: **open-domain planner backstop** (improvement-plan #1, the "#1
+  reason CB would lose Track D"). `query()` now consults the structured tier for a known entity
+  even when no predicate keyword matches (was bypassed → vector-only), capped at MAX_CONTEXT_ITEMS-1
+  to reserve vector recall; new `StructuredTier.predicates_for`. +3 tests. Gate 79 passed/4 skipped,
+  ruff clean. **Opus-4.8 reviewer PASS** — independently instrumented `run_harness`: backstop fires
+  **0×** on all 54 probes → AC-9 provably unchanged; zero bugs across as-of/render/budget/determinism
+  edge cases. Branch `claude/open-domain-backstop`.

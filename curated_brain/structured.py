@@ -112,6 +112,14 @@ class StructuredTier:
     def open_facts(self) -> list[Fact]:
         return [f for f in self.facts if f.is_open]
 
+    def predicates_for(self, subject: str) -> list[str]:
+        """Distinct predicates with a currently-open fact for ``subject`` (sorted, so the
+        order is deterministic regardless of insertion order)."""
+        key = normalize(subject)
+        preds = {f.predicate for f in self.facts
+                 if f.is_open and normalize(f.subject) == key}
+        return sorted(preds)
+
     # ------------------------------------------------------------------ persistence --
     def to_dict(self) -> list[dict]:
         return [vars(f) for f in self.facts]
