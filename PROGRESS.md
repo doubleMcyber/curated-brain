@@ -154,8 +154,9 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       - [x] **LICENSE** (Apache-2.0, matches Mem0/Letta/Zep), **README** (honest — explicitly does
         NOT claim benchmark wins), **CI** (`.github/workflows/ci.yml`: ruff + pytest on py3.11/3.12).
       - [x] `pip install -e .` verified (curated-brain 0.1.0); README quickstart runs as written.
+      - [x] CHANGELOG.md + CONTRIBUTING.md.
       - [ ] Remaining: **PyPI publish** (needs the maintainer's account/token — can't be done by the
-        agent), docs site, CHANGELOG, CONTRIBUTING, type-checking (mypy/pyright) gate, coverage.
+        agent), docs site, type-checking (mypy/pyright) gate, coverage.
       *Bar:* `pip install` works ✅; CI green (workflow added; will be green on first push — gate is green locally).
 - [ ] **I. Positioning.** Write-up of the "memory is curation" thesis + benchmark table, comparison
       matrix vs rivals, demo, launch post. *Bar:* publishable report with reproducible numbers.
