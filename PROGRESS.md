@@ -118,8 +118,13 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 - [ ] **C. Storage & scale.** Real ANN (hnswlib/faiss/sqlite-vec) + durable persistence
       (SQLite + on-disk index) behind existing protocols; concurrency/async; namespacing.
       *Bar:* load test ≥1e5 records meeting a stated recall@k + p95-latency bar.
-- [ ] **G. Observability, ops & cost.** Decision logging/tracing, metrics (size/discard/recall/$),
-      budgets + backpressure, graceful provider failure. *Bar:* dashboards/metrics emitted for a full run.
+- [~] **G. Observability, ops & cost.** *(metrics landed — reviewer PASS 2026-06-18)*
+      - [x] `CuratedBrain.metrics()`: write-decision breakdown (stored/reinforced/discarded),
+        `discard_rate` (Pillar-B selectivity signal), store size, structured-fact count. Cheap
+        (no snapshot), deterministic, reset on restore. Tied to real behavior in `test_observability.py`.
+      - [ ] Remaining: decision tracing/log, **cost/$ + latency accounting** (per-provider token/$),
+        budgets + backpressure, graceful provider failure/degradation.
+      *Bar:* dashboards/metrics emitted for a full run.
 - [~] **H. Robustness & hardening.** *(suite + boundary validation landed — reviewer PASS 2026-06-18)*
       - [x] `test_robustness.py`: seeded fuzz (unicode/control/oversized/empty) — never crashes;
         deterministic under fuzz (incl. consolidate); snapshot/restore round-trips; supersede invariant.
@@ -244,3 +249,6 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   suite then found 5 real bugs by probing beyond it — all fixed + locked, incl. a **silent
   bi-temporal corruption** (non-finite timestamp → un-queryable "open" fact). Added boundary
   validation to `write`/`query` (fail-loud, clear typed errors). Gate 69 passed/4 skipped, ruff clean.
+- 2026-06-18 — Track G: `CuratedBrain.metrics()` observability (decision breakdown, discard_rate,
+  store size). Reviewer PASS; addressed 2 nice-to-haves (cheap metrics without snapshot; reset on
+  restore). Gate 73 passed/4 skipped, ruff clean.
