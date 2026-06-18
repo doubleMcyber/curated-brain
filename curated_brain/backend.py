@@ -70,11 +70,16 @@ class MemoryBackend(abc.ABC):
 
 class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
-                 dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None) -> None:
+                 dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
+                 extractor=None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
         self._gate_cfg = (gate or SurpriseGate()).to_dict()
+        # Optional Track-B extractor: when set, facts are derived from raw text for
+        # observations that arrive without a pre-extracted `metadata.fact`. Default None
+        # preserves the spoon-fed-fact behavior (and AC-1 determinism) exactly.
+        self.extractor = extractor
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -87,6 +92,13 @@ class CuratedBrain(MemoryBackend):
               metadata: dict | None = None) -> WriteReceipt:
         meta = metadata or {}
         fact = meta.get("fact")
+        # Track B: derive facts from raw text when none were supplied. The first is the
+        # "primary" fact driving contradiction/gate bookkeeping; every extracted fact is
+        # routed to the structured tier below.
+        facts = [fact] if fact else []
+        if not facts and self.extractor is not None:
+            facts = self.extractor.extract(observation)
+            fact = facts[0] if facts else None
         embedding = self.embedder.embed(observation)
 
         nearest = self.vector.nearest(embedding)
@@ -126,7 +138,8 @@ class CuratedBrain(MemoryBackend):
 
         # Facts are ALWAYS captured by the structured tier (idempotent assert), so the
         # surprise gate can drop the raw episodic record without ever losing a salient fact.
-        self._route_fact(fact, rec_id, session_id, timestamp)
+        for f in facts:
+            self._route_fact(f, rec_id, session_id, timestamp)
         self._note_session(session_id, timestamp)
         return WriteReceipt(stored=decision == STORE, reason=decision,
                             record_id=rec_id, surprise=surprise)

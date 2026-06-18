@@ -95,10 +95,14 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       - [x] **Real finding (kept visible):** the 0.8B model is a mediocre extractor — few-shot
         leaks exemplars and chit-chat hallucinates, both *killed by grounding*; predicate mapping
         is imperfect (`Dan leads Apollo` → `role|leads`). Motivates a bigger model / better prompt for D.
-      - [ ] Wire the extractor into `CuratedBrain.write` (derive facts from raw text when
-        `metadata.fact` is absent) — core-write-path change, do carefully + keep all 59 green.
+      - [x] **Wired into `CuratedBrain.write`** — optional `extractor=` ctor arg (default None →
+        unchanged behavior + AC-1 intact); raw text with no `metadata.fact` now derives + routes
+        facts. End-to-end test (raw text → structured tier → exact answer) + N>1 routing test.
+        Reviewer PASS (non-breaking, multi-fact routing sound). Gate 61 passed / 4 skipped.
       - [ ] Entity resolution / canonicalization + coreference; extraction confidence → gate.
-      - [ ] **B-eval:** extraction precision/recall on a held-out set (try Qwen3.5-2B for quality).
+      - [ ] **B-eval:** run the *full longitudinal harness with extraction ON* (needs a recorded
+        cassette over the whole stream — hours of CPU inference, or a faster runtime) and compare
+        C-category scores vs the spoon-fed baseline. Try Qwen3.5-2B for better predicate mapping.
       *Bar:* structured tier populated from **raw text only** (no `metadata.fact`), extraction F1 ≥ target.
 - [ ] **D. External evaluation.** LongMemEval harness; head-to-head vs Mem0/Letta/Zep on the
       same local model; report accuracy **and** cost/latency/size; ablations; reproducible.
@@ -125,9 +129,14 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 ---
 
 ## CURRENT POSITION
-- Phase: **Track 1 PROVE, in progress.** Track A real-provider seam + cassette + re-embed
-  migration landed (2 reviewed commits); **live LLM verified on CPU**. The pipeline is no
-  longer architecturally faked; the embedder live run is the only env-blocked piece.
+- Phase: **Track 1 PROVE, well advanced.** Track A real-provider seam + cassette + re-embed
+  migration landed (live LLM verified on CPU); **Track B extraction is implemented AND wired into
+  the write path** — raw text → structured tier proven end-to-end. The pipeline is no longer
+  architecturally faked *and* no longer depends on spoon-fed facts (when an extractor is supplied).
+  Env-blocked: live bge embedder run (HF weight egress). 5 reviewed commits this session.
+- **Next:** B-eval — run the full longitudinal harness with extraction ON (record a stream-wide
+  cassette, or use a faster runtime) and compare C-category scores vs the spoon-fed baseline.
+  Then D (LongMemEval vs Mem0/Letta/Zep). Interleave remaining Track A (logprob; real-LLM consolidation).
 - **Next concrete step → Track B (extraction), designed this session:**
   1. `extraction.py` → `LLMExtractor(llm)`: prompt the LLM for `subject | predicate | object`
      lines, parse → `[{subject,predicate,object}]`. This is the *real, general* path (proven
@@ -178,4 +187,9 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   anti-hallucination filter) + honest replay-cassette tests (`test_extraction.py`,
   `tests/fixtures/extract_cassette.json`). Gate 59 passed/4 skipped, ruff clean, Opus-4.8 reviewer
   PASS (verified fixture is genuine model output, tests non-vacuous). Surfaced the 0.8B model's
-  extraction weaknesses honestly. NOT yet wired into the write path (next).
+  extraction weaknesses honestly.
+- 2026-06-18 — Track B wiring: extractor wired into `CuratedBrain.write` (optional `extractor=`,
+  default None → byte-identical legacy behavior). Raw text → structured tier proven end-to-end;
+  grounding keeps leaked exemplars out of the store; N>1 routing covered. Gate 61 passed/4 skipped,
+  ruff clean, Opus-4.8 reviewer PASS (non-breaking, AC-1 intact). **Milestone: the spoon-fed-fact
+  crutch is removed when an extractor is supplied.** Next: B-eval on the full harness.
