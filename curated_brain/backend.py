@@ -125,6 +125,7 @@ class CuratedBrain(MemoryBackend):
         novelty = 1.0 - max_cos
         contradiction = self._is_contradiction(fact)
         decision = self.gate.decide(novelty, contradiction=contradiction)
+        self._decisions[decision] += 1
         surprise = 1.0 if contradiction else novelty
 
         rec_id = None
@@ -348,6 +349,25 @@ class CuratedBrain(MemoryBackend):
             embed_model_id=self.embedder.model_id,
         )
 
+    def metrics(self) -> dict:
+        """Operational metrics for observability (PRD §G): the write-decision breakdown and
+        store size. ``discard_rate`` is the selectivity signal — it should stay high on a
+        redundant stream (Pillar B), evidence the gate is doing its job rather than logging
+        everything. Cheap, side-effect-free, and safe to poll between writes."""
+        d = self._decisions
+        total = d["stored"] + d["reinforced"] + d["discarded"]
+        # Count records directly (don't call stats(), which serializes the whole store just
+        # to measure bytes) so metrics() stays genuinely cheap and safe to poll.
+        episodic = sum(1 for r in self._episodes if r.tier == "episodic")
+        semantic = sum(1 for r in self._episodes if r.tier == "semantic")
+        return {
+            "writes_total": total,
+            "stored": d["stored"], "reinforced": d["reinforced"], "discarded": d["discarded"],
+            "discard_rate": (d["discarded"] / total) if total else 0.0,
+            "store_size": episodic + semantic,
+            "structured_facts": len(self.structured.facts),
+        }
+
     def reset(self) -> None:
         self._counter = 0
         self._episodes: list[EpisodicRecord] = []
@@ -357,6 +377,8 @@ class CuratedBrain(MemoryBackend):
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._entities: set[str] = set()
         self._session_ts: dict[int, float] = {}
+        # Operational counters (observability, not core state — kept out of the snapshot).
+        self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
 
     # ------------------------------------------------------------------ persistence --
     def _state(self) -> dict:
@@ -394,3 +416,6 @@ class CuratedBrain(MemoryBackend):
         self._session_ts = {}
         for r in self._episodes:
             self._note_session(r.session_id, r.wall_ts)
+        # Operational counters describe *this instance's* activity, not the restored store,
+        # so reset them — otherwise metrics() would report counts unrelated to the snapshot.
+        self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
