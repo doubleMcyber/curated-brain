@@ -116,9 +116,12 @@ class CuratedBrain(MemoryBackend):
         # routed to the structured tier below.
         facts = [fact] if fact else []
         if not facts and self.extractor is not None:
+            self._cost["extract_calls"] += 1
             facts = self.extractor.extract(observation)
             fact = facts[0] if facts else None
         embedding = self.embedder.embed(observation)
+        self._cost["embed_calls"] += 1
+        self._cost["embed_tokens"] += count_tokens(observation)
 
         nearest = self.vector.nearest(embedding)
         max_cos = max(0.0, min(1.0, nearest[1])) if nearest else 0.0
@@ -258,7 +261,12 @@ class CuratedBrain(MemoryBackend):
                                       valid_interval=it.valid_interval))
 
         context = "\n".join(f"[{i}] {ln}" for i, ln in enumerate(lines, 1))
-        return Retrieval(context=context, citations=citations, tokens_in=count_tokens(context))
+        tokens_in = count_tokens(context)
+        self._cost["embed_calls"] += 1  # search() embeds the question once
+        self._cost["embed_tokens"] += count_tokens(question)
+        self._cost["queries"] += 1
+        self._cost["context_tokens_served"] += tokens_in
+        return Retrieval(context=context, citations=citations, tokens_in=tokens_in)
 
     def _stale_objs(self) -> set[str]:
         """Normalized object values to filter out of fused vector context: those that have
@@ -376,12 +384,19 @@ class CuratedBrain(MemoryBackend):
         # to measure bytes) so metrics() stays genuinely cheap and safe to poll.
         episodic = sum(1 for r in self._episodes if r.tier == "episodic")
         semantic = sum(1 for r in self._episodes if r.tier == "semantic")
+        c = self._cost
         return {
             "writes_total": total,
             "stored": d["stored"], "reinforced": d["reinforced"], "discarded": d["discarded"],
             "discard_rate": (d["discarded"] / total) if total else 0.0,
             "store_size": episodic + semantic,
             "structured_facts": len(self.structured.facts),
+            # Cost axis (deterministic; no wall-clock). `avg_context_tokens` is the headline
+            # retrieval-cost number — tokens of context served per query — directly comparable
+            # to a rival's, for the Track-D "≤ its cost" claim.
+            "cost": {**c,
+                     "avg_context_tokens": (c["context_tokens_served"] / c["queries"])
+                     if c["queries"] else 0.0},
         }
 
     def reset(self) -> None:
@@ -395,6 +410,14 @@ class CuratedBrain(MemoryBackend):
         self._session_ts: dict[int, float] = {}
         # Operational counters (observability, not core state — kept out of the snapshot).
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
+        # Cost accounting for the write + query hot path (the comparable Track-D axes:
+        # cost-per-write and cost-per-query) and extraction. Deterministic (token counts,
+        # not wall-clock), so it's the "cost" axis for the benchmark table ("accuracy AND
+        # cost") and the "≤ its cost" DONE clause. Scope note: consolidation's internal
+        # re-embeds (amortized maintenance) and latency (wall-clock — excluded by design to
+        # keep the core deterministic) are intentionally not metered here.
+        self._cost = {"embed_calls": 0, "embed_tokens": 0, "extract_calls": 0,
+                      "queries": 0, "context_tokens_served": 0}
 
     # ------------------------------------------------------------------ persistence --
     def _state(self) -> dict:
@@ -442,6 +465,8 @@ class CuratedBrain(MemoryBackend):
         # Operational counters describe *this instance's* activity, not the restored store,
         # so reset them — otherwise metrics() would report counts unrelated to the snapshot.
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
+        self._cost = {"embed_calls": 0, "embed_tokens": 0, "extract_calls": 0,
+                      "queries": 0, "context_tokens_served": 0}
 
     def save(self, path: str) -> None:
         """Durably persist the whole store to ``path`` (survives a process restart). Thin,
