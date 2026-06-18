@@ -144,8 +144,12 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       *Bar:* fuzz suite green; soak holds.
 
 ### Track 3 — SHIP (adoption surface + narrative)
-- [ ] **E. Public API & DX.** Clean SDK facade, LangChain/LlamaIndex + **MCP server**, examples,
-      quickstart, typed config. *Bar:* quickstart runs from a clean env in <10 min.
+- [~] **E. Public API & DX.** *(API + examples landed — reviewer PASS 2026-06-18)*
+      - [x] Complete top-level API (`curated_brain/__init__.py` exports core + protocols + fakes +
+        real providers + extractor; imports stay lazy — no torch at import). 3 runnable `examples/`
+        (basic memory, belief-update, real-models), 2 offline ones smoke-tested in CI (`test_examples.py`).
+      - [ ] Remaining: LangChain/LlamaIndex memory adapter, an **MCP server**, typed config object.
+      *Bar:* quickstart runs from a clean env in <10 min.
 - [~] **F. Release engineering.** *(core surface landed — reviewer PASS 2026-06-18)*
       - [x] **LICENSE** (Apache-2.0, matches Mem0/Letta/Zep), **README** (honest — explicitly does
         NOT claim benchmark wins), **CI** (`.github/workflows/ci.yml`: ruff + pytest on py3.11/3.12).
@@ -263,3 +267,6 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   bug** (`_session_ts` rebuilt only from stored episodes → C6 as-of answers diverged after restore);
   fixed by persisting it in the snapshot. Reviewer PASS (quantified 34/64 sessions lost pre-fix;
   confirmed no other field affected). Gate 74 passed/4 skipped, ruff clean.
+- 2026-06-18 — Track E: complete top-level public API + 3 runnable `examples/` (2 offline,
+  smoke-tested). Lazy imports verified (no torch at `import curated_brain`). Reviewer PASS.
+  Gate 76 passed/4 skipped, ruff clean.
