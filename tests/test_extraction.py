@@ -56,6 +56,47 @@ def test_replay_miss_raises_so_assertions_use_real_recorded_output():
         _replayer().extract("An unrecorded sentence about nobody in particular.")
 
 
+def test_extractor_populates_structured_tier_from_raw_text():
+    # End-to-end: raw observations (NO metadata.fact) flow through the wired-in extractor
+    # into the bi-temporal structured tier, which then answers exact queries. This is the
+    # thesis-critical path — the dataset's spoon-fed facts are no longer required.
+    from curated_brain.backend import CuratedBrain
+    from curated_brain.fakes import DeterministicEmbedder
+
+    cb = CuratedBrain(embedder=DeterministicEmbedder(64), dim=64, seed=0, extractor=_replayer())
+    for text, sid in [("Erin moved to Vienna last spring.", "s1"),
+                      ("Bob was promoted to engineering manager.", "s1"),
+                      ("Cara's email address is cara@example.com.", "s2"),
+                      ("The weather was pleasant and nothing else happened.", "s3")]:
+        cb.write(text, session_id=sid, timestamp=0.0)  # raw text only
+
+    assert cb.answer_structured("Erin", "city") == "Vienna"
+    assert cb.answer_structured("Bob", "role") == "engineering manager"
+    assert cb.answer_structured("Cara", "email") == "cara@example.com"
+    # the grounding guard kept the leaked few-shot exemplar OUT of the store
+    assert cb.answer_structured("Alice", "city") == ""
+
+
+def test_write_routes_every_extracted_fact_not_just_the_first():
+    # Plumbing guard for the N>1 routing loop in write(): an observation that yields TWO
+    # grounded facts must land BOTH in the structured tier. (Extraction *quality* is tested
+    # against the real cassette above; here the completion is hand-authored on purpose so
+    # the test isolates the routing loop — reverting it to route only facts[0] fails this.)
+    from curated_brain.backend import CuratedBrain
+    from curated_brain.fakes import DeterministicEmbedder
+
+    text = "Dana leads Apollo and lives in Oslo."
+    cas = Cassette()
+    ext = LLMExtractor(CachedLLM(cas, inner=None))
+    cas.complete[Cassette._key(ext.prompt.format(text=text))] = (
+        "Dana | project | Apollo\nDana | city | Oslo")
+
+    cb = CuratedBrain(embedder=DeterministicEmbedder(64), dim=64, seed=0, extractor=ext)
+    cb.write(text, session_id="s1", timestamp=0.0)
+    assert cb.answer_structured("Dana", "project") == "Apollo"
+    assert cb.answer_structured("Dana", "city") == "Oslo"
+
+
 @pytest.mark.skipif(not LIVE_LLM, reason="set CB_LIVE=1 with the 'local' extra + a cached model")
 def test_live_extraction_is_grounded():
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
