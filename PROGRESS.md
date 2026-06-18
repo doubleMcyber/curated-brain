@@ -99,10 +99,15 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         unchanged behavior + AC-1 intact); raw text with no `metadata.fact` now derives + routes
         facts. End-to-end test (raw text → structured tier → exact answer) + N>1 routing test.
         Reviewer PASS (non-breaking, multi-fact routing sound). Gate 61 passed / 4 skipped.
+      - [x] **Scoped B-eval (capability A/B)** — `test_beval.py` + `beval_cassette.json`:
+        extraction-ON (real recorded Qwen output) **matches the spoon-fed baseline on
+        C1/C2/C5/C6** (recall, belief-update, multi-hop, as-of, and multi-hop×as-of) on a
+        controlled 6-fact world. 1 honest miss surfaced (model dropped Frank's project).
+        Reviewer PASS — "the plumbing is real and correct," appropriately scoped (not a vs-rivals claim).
       - [ ] Entity resolution / canonicalization + coreference; extraction confidence → gate.
-      - [ ] **B-eval:** run the *full longitudinal harness with extraction ON* (needs a recorded
-        cassette over the whole stream — hours of CPU inference, or a faster runtime) and compare
-        C-category scores vs the spoon-fed baseline. Try Qwen3.5-2B for better predicate mapping.
+      - [ ] **Full-harness B-eval** (still pending): extraction ON over the *whole* longitudinal
+        stream — needs a stream-wide cassette (hours of CPU) or a faster runtime; try Qwen3.5-2B
+        for better predicate mapping (the 0.8B drops `project` from "leads the Apollo project").
       *Bar:* structured tier populated from **raw text only** (no `metadata.fact`), extraction F1 ≥ target.
 - [ ] **D. External evaluation.** LongMemEval harness; head-to-head vs Mem0/Letta/Zep on the
       same local model; report accuracy **and** cost/latency/size; ablations; reproducible.
@@ -192,4 +197,9 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   default None → byte-identical legacy behavior). Raw text → structured tier proven end-to-end;
   grounding keeps leaked exemplars out of the store; N>1 routing covered. Gate 61 passed/4 skipped,
   ruff clean, Opus-4.8 reviewer PASS (non-breaking, AC-1 intact). **Milestone: the spoon-fed-fact
-  crutch is removed when an extractor is supplied.** Next: B-eval on the full harness.
+  crutch is removed when an extractor is supplied.**
+- 2026-06-18 — Scoped B-eval: `test_beval.py` + `beval_cassette.json` (genuine recorded Qwen
+  output). Extraction-ON **matches spoon-fed on C1/C2/C5/C6** on a controlled world; 1 model miss
+  surfaced honestly. Gate 63 passed/4 skipped, ruff clean, Opus-4.8 reviewer PASS (cassette
+  verified genuine, A/B non-vacuous, bi-temporal correct, scoping honest). Full-harness B-eval +
+  Track D (LongMemEval vs Mem0/Letta/Zep) remain — need external systems / heavy compute.
