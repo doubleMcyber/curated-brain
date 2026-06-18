@@ -23,7 +23,12 @@ from curated_brain.backend import CuratedBrain
 from curated_brain.cassette import CachedEmbedder, CachedLLM, Cassette
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.protocols import LLM, Embedder
-from curated_brain.providers import SentenceTransformerEmbedder, TransformersLLM
+from curated_brain.providers import (
+    OpenAICompatEmbedder,
+    OpenAICompatLLM,
+    SentenceTransformerEmbedder,
+    TransformersLLM,
+)
 
 LIVE = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("sentence_transformers")
 LIVE_LLM = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("transformers")
@@ -46,6 +51,61 @@ def test_missing_extra_raises_actionable_error(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", None)
     with pytest.raises(RuntimeError, match="local"):
         TransformersLLM().complete("x")
+
+
+# ------------------------------------------------- offline: OpenAI-compatible seam ---
+def test_openai_compat_embedder_offline():
+    calls = []
+
+    def fake_post(path, body):
+        calls.append((path, body))
+        return {"data": [{"index": 0, "embedding": [3.0, 4.0]}]}
+
+    emb = OpenAICompatEmbedder("text-embedding-3-small", dim=2, post=fake_post)
+    assert isinstance(emb, Embedder)
+    assert emb.model_id == "openai:text-embedding-3-small" and emb.dim == 2
+    assert np.allclose(emb.embed("hello"), [0.6, 0.8])  # 3-4-5 -> unit vector
+    assert calls == [("/embeddings", {"model": "text-embedding-3-small", "input": "hello"})]
+
+
+def test_openai_compat_embedder_batch_preserves_order():
+    def fake_post(path, body):  # returned out of order to prove we sort by index
+        return {"data": [{"index": 1, "embedding": [0.0, 2.0]},
+                         {"index": 0, "embedding": [2.0, 0.0]}]}
+
+    emb = OpenAICompatEmbedder("m", dim=2, post=fake_post)
+    out = emb.embed_batch(["a", "b"])
+    assert out.shape == (2, 2)
+    assert np.allclose(out[0], [1.0, 0.0]) and np.allclose(out[1], [0.0, 1.0])
+    assert emb.embed_batch([]).shape == (0, 2)  # empty input is safe
+
+
+def test_openai_compat_llm_offline():
+    seen = {}
+
+    def fake_post(path, body):
+        seen.update(path=path, body=body)
+        return {"choices": [{"message": {"content": " Vienna "}}]}
+
+    llm = OpenAICompatLLM("gpt-4o-mini", post=fake_post)
+    assert isinstance(llm, LLM) and llm.model_id == "openai:gpt-4o-mini"
+    assert llm.complete("Where?") == "Vienna"  # whitespace stripped
+    assert seen["path"] == "/chat/completions"
+    assert seen["body"]["messages"] == [{"role": "user", "content": "Where?"}]
+    assert seen["body"]["temperature"] == 0.0  # greedy by default, for reproducibility
+
+
+def test_openai_compat_embedder_drives_the_pipeline():
+    # The remote embedder drops into CuratedBrain like any other Embedder (here via a
+    # deterministic fake transport, so it stays offline + reproducible).
+    def fake_post(path, body):
+        h = sum(ord(c) for c in body["input"])
+        return {"data": [{"index": 0, "embedding": [float(h % 7 + 1), float(h % 5 + 1)]}]}
+
+    cb = CuratedBrain(embedder=OpenAICompatEmbedder("m", dim=2, post=fake_post), dim=2)
+    cb.write("Erin lives in Vienna.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Erin", "predicate": "city", "object": "Vienna"}})
+    assert cb.answer_structured("Erin", "city") == "Vienna"
 
 
 # -------------------------------------------------------------- offline: cassette ----

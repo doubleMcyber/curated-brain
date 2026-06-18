@@ -125,3 +125,90 @@ class TransformersLLM:
                                  pad_token_id=self._tok.eos_token_id)
         gen = out[0][inputs["input_ids"].shape[1]:]
         return self._tok.decode(gen, skip_special_tokens=True).strip()
+
+
+# ----------------------------------------------------------------- remote providers --
+# OpenAI-compatible HTTP providers. The point for Track D: Curated Brain and every rival
+# (Mem0/Letta/Zep) can be pointed at the SAME endpoint + model, so the head-to-head varies
+# only the memory layer — and it dodges the local-CPU bottleneck (use a hosted or vLLM
+# endpoint). Stdlib-only HTTP (no new dependency); a `post` seam keeps them offline-testable.
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    """L2-normalize so cosine == dot, matching the Embedder contract (0-vector stays 0)."""
+    n = float(np.linalg.norm(v))
+    return v / n if n else v
+
+
+def _http_post_json(url: str, body: dict, api_key: str | None, timeout: float) -> dict:
+    import json
+    import urllib.request
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                 headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted base_url)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+class OpenAICompatEmbedder:
+    """Embedder backed by any OpenAI-compatible ``/embeddings`` endpoint (OpenAI, vLLM,
+    Ollama's OpenAI mode, Together, …). ``dim`` is required so the vector tier can be sized
+    without a network call. Pass ``post`` (a ``(path, body) -> dict`` callable) to inject a
+    transport in tests; production uses stdlib HTTP."""
+
+    def __init__(self, model: str, *, dim: int,
+                 base_url: str = "https://api.openai.com/v1",
+                 api_key: str | None = None, timeout: float = 30.0, post=None) -> None:
+        self.model = model
+        self.model_id = f"openai:{model}"
+        self.dim = dim
+        self.base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._timeout = timeout
+        self._post = post
+
+    def _request(self, path: str, body: dict) -> dict:
+        if self._post is not None:
+            return self._post(path, body)
+        return _http_post_json(self.base_url + path, body, self._api_key, self._timeout)
+
+    def embed(self, text: str) -> np.ndarray:
+        data = self._request("/embeddings", {"model": self.model, "input": text})
+        return _unit(np.asarray(data["data"][0]["embedding"], dtype=np.float64))
+
+    def embed_batch(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float64)
+        data = self._request("/embeddings", {"model": self.model, "input": list(texts)})
+        rows = sorted(data["data"], key=lambda d: d["index"])  # preserve input order
+        return np.vstack([_unit(np.asarray(r["embedding"], dtype=np.float64)) for r in rows])
+
+
+class OpenAICompatLLM:
+    """Chat LLM backed by any OpenAI-compatible ``/chat/completions`` endpoint. Temperature
+    defaults to 0 (greedy) for reproducibility. Pass ``post`` to inject a transport in tests."""
+
+    def __init__(self, model: str, *, base_url: str = "https://api.openai.com/v1",
+                 api_key: str | None = None, max_tokens: int = 256,
+                 temperature: float = 0.0, timeout: float = 60.0, post=None) -> None:
+        self.model = model
+        self.model_id = f"openai:{model}"
+        self.base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self._timeout = timeout
+        self._post = post
+
+    def _request(self, path: str, body: dict) -> dict:
+        if self._post is not None:
+            return self._post(path, body)
+        return _http_post_json(self.base_url + path, body, self._api_key, self._timeout)
+
+    def complete(self, prompt: str) -> str:
+        body = {"model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": self.max_tokens, "temperature": self.temperature}
+        data = self._request("/chat/completions", body)
+        return data["choices"][0]["message"]["content"].strip()

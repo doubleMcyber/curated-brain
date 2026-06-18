@@ -22,7 +22,12 @@ from curated_brain.models import (
     WriteReceipt,
 )
 from curated_brain.protocols import LLM, Embedder
-from curated_brain.providers import SentenceTransformerEmbedder, TransformersLLM
+from curated_brain.providers import (
+    OpenAICompatEmbedder,
+    OpenAICompatLLM,
+    SentenceTransformerEmbedder,
+    TransformersLLM,
+)
 
 __all__ = [
     # core
@@ -35,6 +40,8 @@ __all__ = [
     "RuleBasedLLM",
     "SentenceTransformerEmbedder",
     "TransformersLLM",
+    "OpenAICompatEmbedder",
+    "OpenAICompatLLM",
     "LLMExtractor",
     # data types
     "EpisodicRecord",
