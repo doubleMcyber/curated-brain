@@ -24,7 +24,8 @@ from curated_brain.models import (
     WriteReceipt,
 )
 from curated_brain.structured import StructuredTier
-from curated_brain.util import count_tokens, from_jsonable, jaccard, to_jsonable
+from curated_brain.util import count_tokens, from_jsonable, to_jsonable
+from curated_brain.vector import VectorTier
 
 SNAPSHOT_VERSION = 1
 
@@ -77,6 +78,7 @@ class CuratedBrain(MemoryBackend):
     def write(self, observation: str, *, session_id: str, timestamp: float,
               metadata: dict | None = None) -> WriteReceipt:
         meta = metadata or {}
+        fact = meta.get("fact")
         rec = EpisodicRecord(
             id=self._next_id("ep"),
             session_id=session_id,
@@ -90,7 +92,10 @@ class CuratedBrain(MemoryBackend):
             last_seen_ts=timestamp,
         )
         self._episodes.append(rec)
-        self._route_fact(meta.get("fact"), rec, timestamp)
+        self.vector.add(rid=rec.id, text=observation, wall_ts=timestamp,
+                        session_id=session_id, tier="episodic",
+                        entities=[fact["subject"]] if fact else [])
+        self._route_fact(fact, rec, timestamp)
         return WriteReceipt(stored=True, reason="stored", record_id=rec.id, surprise=0.0)
 
     def _route_fact(self, fact: dict | None, rec: EpisodicRecord, timestamp: float) -> None:
@@ -120,16 +125,15 @@ class CuratedBrain(MemoryBackend):
     # ------------------------------------------------------------------ query path ---
     def query(self, question: str, *, session_id: str, timestamp: float,
               k: int = 8) -> Retrieval:
-        scored = sorted(
-            self._episodes,
-            key=lambda r: (jaccard(question, r.content), r.wall_ts, r.id),
-            reverse=True,
-        )
-        top = [r for r in scored if jaccard(question, r.content) > 0.0][:k]
+        """Stage-3 semantic recall: top-k vector search over episodic memory (causal).
+
+        Stage 4 layers the structured tier, fusion re-rank and supersede-filtering on top.
+        """
+        hits = self.vector.search(question, k=k, t=timestamp)
         lines, citations = [], []
-        for i, r in enumerate(top, 1):
-            lines.append(f"[{i}] {r.content}")
-            citations.append(Citation(record_id=r.id, provenance=r.provenance,
+        for i, (r, _score) in enumerate(hits, 1):
+            lines.append(f"[{i}] {r.text}")
+            citations.append(Citation(record_id=r.rid, provenance={"session_id": r.session_id},
                                       valid_interval=(r.wall_ts, float("inf"))))
         context = "\n".join(lines)
         return Retrieval(context=context, citations=citations, tokens_in=count_tokens(context))
@@ -154,6 +158,7 @@ class CuratedBrain(MemoryBackend):
         self._counter = 0
         self._episodes: list[EpisodicRecord] = []
         self.structured = StructuredTier()
+        self.vector = VectorTier(self.embedder)
 
     # ------------------------------------------------------------------ persistence --
     def _state(self) -> dict:
@@ -166,7 +171,7 @@ class CuratedBrain(MemoryBackend):
             "counter": self._counter,
             "episodic": [vars(r) for r in self._episodes],
             "structured": self.structured.to_dict(),
-            "vector": {},
+            "vector": self.vector.to_dict(),
             "gate": {},
         }
 
@@ -181,3 +186,6 @@ class CuratedBrain(MemoryBackend):
         self._episodes = [EpisodicRecord(**d) for d in state["episodic"]]
         self.structured = StructuredTier()
         self.structured.load(state.get("structured", []))
+        self.vector = VectorTier(self.embedder)
+        if state.get("vector"):
+            self.vector.load(state["vector"])
