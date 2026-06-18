@@ -23,9 +23,12 @@ from curated_brain.models import (
     StoreStats,
     WriteReceipt,
 )
+from curated_brain.retrieval import Planner, fuse, render_fact
 from curated_brain.structured import StructuredTier
-from curated_brain.util import count_tokens, from_jsonable, to_jsonable
+from curated_brain.util import count_tokens, from_jsonable, normalize, to_jsonable
 from curated_brain.vector import VectorTier
+
+MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-context)
 
 SNAPSHOT_VERSION = 1
 
@@ -67,6 +70,7 @@ class CuratedBrain(MemoryBackend):
                  dim: int = 256, seed: int = 0) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
+        self.planner = Planner()
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -96,7 +100,17 @@ class CuratedBrain(MemoryBackend):
                         session_id=session_id, tier="episodic",
                         entities=[fact["subject"]] if fact else [])
         self._route_fact(fact, rec, timestamp)
+        self._note_session(session_id, timestamp)
         return WriteReceipt(stored=True, reason="stored", record_id=rec.id, surprise=0.0)
+
+    def _note_session(self, session_id: str, timestamp: float) -> None:
+        """Record the earliest timestamp seen per session index so the planner can map a
+        natural-language "as of session N" back to an as-of time."""
+        if session_id.startswith("s") and session_id[1:].isdigit():
+            idx = int(session_id[1:])
+            prev = self._session_ts.get(idx)
+            if prev is None or timestamp < prev:
+                self._session_ts[idx] = timestamp
 
     def _route_fact(self, fact: dict | None, rec: EpisodicRecord, timestamp: float) -> None:
         """Route an extracted triple into the bi-temporal structured tier (PRD §6)."""
@@ -109,6 +123,7 @@ class CuratedBrain(MemoryBackend):
             provenance={"episode_id": rec.id, "session_id": rec.session_id,
                         "wall_ts": rec.wall_ts},
         )
+        self._entities.add(normalize(fact["subject"]))
 
     # ----------------------------------------------------------- structured answers --
     def answer_structured(self, subject: str, predicate: str, *, at: float | None = None) -> str:
@@ -125,18 +140,42 @@ class CuratedBrain(MemoryBackend):
     # ------------------------------------------------------------------ query path ---
     def query(self, question: str, *, session_id: str, timestamp: float,
               k: int = 8) -> Retrieval:
-        """Stage-3 semantic recall: top-k vector search over episodic memory (causal).
+        """Hybrid retrieval (PRD §7): plan -> fetch structured + vector -> fuse, re-rank,
+        supersede-filter. The exact current/as-of fact is surfaced first; superseded values
+        are dropped so stale contradictions never reach the agent."""
+        plan = self.planner.plan(question, entities=self._entities,
+                                 session_ts=self._session_ts)
+        lines: list[str] = []
+        citations: list[Citation] = []
 
-        Stage 4 layers the structured tier, fusion re-rank and supersede-filtering on top.
-        """
-        hits = self.vector.search(question, k=k, t=timestamp)
-        lines, citations = [], []
-        for i, (r, _score) in enumerate(hits, 1):
-            lines.append(f"[{i}] {r.text}")
-            citations.append(Citation(record_id=r.rid, provenance={"session_id": r.session_id},
-                                      valid_interval=(r.wall_ts, float("inf"))))
-        context = "\n".join(lines)
+        if not plan.open_ended:
+            f = (self.structured.resolve_path(plan.entity, plan.hops, plan.as_of)
+                 if plan.hops else
+                 self.structured.resolve(plan.entity, plan.predicate, plan.as_of))
+            if f is not None:
+                lines.append(render_fact(plan, f))
+                citations.append(Citation(record_id=f.id, provenance=f.provenance,
+                                          valid_interval=(f.valid_from, f.valid_to)))
+
+        vhits = self.vector.search(question, k=k, t=timestamp, entity=plan.entity)
+        for it in fuse(vhits, now=timestamp, stale_objs=self._stale_objs()):
+            if len(lines) >= MAX_CONTEXT_ITEMS:
+                break
+            lines.append(it.text)
+            citations.append(Citation(record_id=it.rid, provenance=it.provenance,
+                                      valid_interval=it.valid_interval))
+
+        context = "\n".join(f"[{i}] {ln}" for i, ln in enumerate(lines, 1))
         return Retrieval(context=context, citations=citations, tokens_in=count_tokens(context))
+
+    def _stale_objs(self) -> set[str]:
+        """Normalized object values to filter out of fused vector context: those that have
+        been superseded (closed in valid time) and are **not currently true for any
+        entity**. Subtracting the open values keeps this safe even if a value is later
+        re-asserted (A→B→A) or is current for one entity while stale for another — so we
+        never drop a statement of a value that is presently true."""
+        open_vals = {normalize(f.object) for f in self.structured.facts if f.is_open}
+        return {normalize(f.object) for f in self.structured.facts if not f.is_open} - open_vals
 
     # ------------------------------------------------------------------ maintenance --
     def consolidate(self) -> ConsolidationReport:
@@ -159,6 +198,8 @@ class CuratedBrain(MemoryBackend):
         self._episodes: list[EpisodicRecord] = []
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
+        self._entities: set[str] = set()
+        self._session_ts: dict[int, float] = {}
 
     # ------------------------------------------------------------------ persistence --
     def _state(self) -> dict:
@@ -189,3 +230,8 @@ class CuratedBrain(MemoryBackend):
         self.vector = VectorTier(self.embedder)
         if state.get("vector"):
             self.vector.load(state["vector"])
+        # Rebuild derived planner state from the restored stores.
+        self._entities = {normalize(f.subject) for f in self.structured.facts}
+        self._session_ts = {}
+        for r in self._episodes:
+            self._note_session(r.session_id, r.wall_ts)
