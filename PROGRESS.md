@@ -138,15 +138,16 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 
 ---
 
-## CURRENT POSITION
-- Phase: **Track 1 PROVE, well advanced.** Track A real-provider seam + cassette + re-embed
-  migration landed (live LLM verified on CPU); **Track B extraction is implemented AND wired into
-  the write path** — raw text → structured tier proven end-to-end. The pipeline is no longer
-  architecturally faked *and* no longer depends on spoon-fed facts (when an extractor is supplied).
-  Env-blocked: live bge embedder run (HF weight egress). 5 reviewed commits this session.
-- **Next:** B-eval — run the full longitudinal harness with extraction ON (record a stream-wide
-  cassette, or use a faster runtime) and compare C-category scores vs the spoon-fed baseline.
-  Then D (LongMemEval vs Mem0/Letta/Zep). Interleave remaining Track A (logprob; real-LLM consolidation).
+## CURRENT POSITION (after 2026-06-18 session — 7 reviewed commits)
+- **DONE-criteria status: 2 of 3 met.** ✅ `pip install` works · ✅ docs (README) + CI + LICENSE
+  · ✅ gate green (63 passed/4 skipped) on a clean `claude/curated-brain` tree.
+  ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked (see BLOCKERS).
+- Done this session: **A** (real local providers + cassette + re-embed; live LLM verified),
+  **B** (extraction implemented + wired into write path; spoon-feeding crutch removed),
+  scoped **B-eval** (extraction-ON matches spoon-fed on C1/C2/C5/C6), **F core** (LICENSE/README/CI/pip).
+- **Next when unblocked (capable env — GPU + egress + competitor systems):** Track **D** first
+  (the only remaining DONE clause). Then full-harness B-eval, remaining Track A (logprob; real-LLM
+  consolidation), Tracks C/G/H, and the rest of E/F/I.
 - **Next concrete step → Track B (extraction), designed this session:**
   1. `extraction.py` → `LLMExtractor(llm)`: prompt the LLM for `subject | predicate | object`
      lines, parse → `[{subject,predicate,object}]`. This is the *real, general* path (proven
@@ -180,8 +181,26 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 - **Run live model tests:** `CB_LIVE=1 pytest tests/test_providers.py -k live` (default gate skips them).
 
 ## BLOCKERS
-- _(none blocking. Note: live bge weight download is slow in this env; live embedder test is
-  written + gated, executes once weights finish — not a code blocker.)_
+- **Track D (LongMemEval head-to-head vs Mem0/Letta/Zep) — the one remaining DONE clause — is
+  environment-blocked (substantiated 2026-06-18), not a code problem.** Three independent reasons:
+  1. **Compute.** This is a laptop with a broken-for-these-models MPS, so LLM inference runs on
+     CPU (~15–25s/call). LongMemEval is ~500 questions over long multi-session histories; running
+     4 systems (Curated Brain + 3 rivals) over it = many hours–days. Infeasible interactively.
+  2. **Competitor infra.** Mem0/Letta/Zep each need their own backend (Letta = a server, Zep =
+     Graphiti + a graph DB) and default to a cloud LLM API key that this environment does not have.
+     A fair run requires wiring all three to the same local model — substantial per-system setup.
+  3. **Data egress.** The dataset exists (`xiaowu0162/longmemeval` on HF) but its history files are
+     large/LFS, and this env's HF **LFS egress is blocked** (same reason bge weights wouldn't download).
+- **How to do Track D on a capable machine (GPU + network + ability to run the rivals):**
+  1. `pip install` the LongMemEval harness + dataset; pick the headline model (a strong instruct
+     model — NOT the 0.8B; it drops facts. Use the hosted/large local model the rivals also use).
+  2. Implement a thin LongMemEval adapter over `MemoryBackend` (write/query/consolidate already fit).
+  3. Stand up Mem0, Letta, Zep, each on the **same** model + token budget (the memory layer must be
+     the only variable). Record accuracy AND cost/latency/store-size.
+  4. Gate: Curated Brain ≥ each rival on the headline metric at ≤ its cost, reproducible from a clean
+     checkout. That closes the last DONE clause.
+- Non-blocking note: live *bge embedder* run also needs HF LFS egress (cached LLMs work on CPU; the
+  live LLM path + extraction are already verified). Use a cached/hosted embedder where egress works.
 
 ## CHANGELOG OF THIS FILE
 - 2026-06-18 — Created. Recorded Stage 1–7 done, the proof→contender gap, locked decisions, and the 9-workstream roadmap.
