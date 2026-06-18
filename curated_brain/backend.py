@@ -25,6 +25,7 @@ from curated_brain.models import (
 )
 from curated_brain.retrieval import Planner, fuse, render_fact
 from curated_brain.structured import StructuredTier
+from curated_brain.surprise import REINFORCE, STORE, SurpriseGate
 from curated_brain.util import count_tokens, from_jsonable, normalize, to_jsonable
 from curated_brain.vector import VectorTier
 
@@ -71,6 +72,7 @@ class CuratedBrain(MemoryBackend):
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
+        self.gate = SurpriseGate()
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -83,25 +85,53 @@ class CuratedBrain(MemoryBackend):
               metadata: dict | None = None) -> WriteReceipt:
         meta = metadata or {}
         fact = meta.get("fact")
-        rec = EpisodicRecord(
-            id=self._next_id("ep"),
-            session_id=session_id,
-            seq=len(self._episodes),
-            wall_ts=timestamp,
-            actor=meta.get("actor", "user"),
-            content=observation,
-            embed_model_id=self.embedder.model_id,
-            surprise=0.0,
-            provenance={"source": "write", "session_id": session_id},
-            last_seen_ts=timestamp,
-        )
-        self._episodes.append(rec)
-        self.vector.add(rid=rec.id, text=observation, wall_ts=timestamp,
-                        session_id=session_id, tier="episodic",
-                        entities=[fact["subject"]] if fact else [])
-        self._route_fact(fact, rec, timestamp)
+        embedding = self.embedder.embed(observation)
+
+        nearest = self.vector.nearest(embedding)
+        max_cos = max(0.0, min(1.0, nearest[1])) if nearest else 0.0
+        novelty = 1.0 - max_cos
+        contradiction = self._is_contradiction(fact)
+        decision = self.gate.decide(novelty, contradiction=contradiction)
+        surprise = 1.0 if contradiction else novelty
+
+        rec_id = None
+        if decision == STORE:
+            rec = EpisodicRecord(
+                id=self._next_id("ep"),
+                session_id=session_id,
+                seq=len(self._episodes),
+                wall_ts=timestamp,
+                actor=meta.get("actor", "user"),
+                content=observation,
+                embed_model_id=self.embedder.model_id,
+                surprise=surprise,
+                provenance={"source": "write", "session_id": session_id},
+                last_seen_ts=timestamp,
+            )
+            self._episodes.append(rec)
+            self._ep_by_id[rec.id] = rec
+            self.vector.add(rid=rec.id, text=observation, wall_ts=timestamp,
+                            session_id=session_id, tier="episodic",
+                            entities=[fact["subject"]] if fact else [], embedding=embedding)
+            rec_id = rec.id
+        elif decision == REINFORCE and nearest is not None:
+            tgt = self._ep_by_id.get(nearest[0].rid)
+            if tgt is not None:
+                tgt.support_count += 1
+                tgt.last_seen_ts = timestamp
+
+        # Facts are ALWAYS captured by the structured tier (idempotent assert), so the
+        # surprise gate can drop the raw episodic record without ever losing a salient fact.
+        self._route_fact(fact, rec_id, session_id, timestamp)
         self._note_session(session_id, timestamp)
-        return WriteReceipt(stored=True, reason="stored", record_id=rec.id, surprise=0.0)
+        return WriteReceipt(stored=decision == STORE, reason=decision,
+                            record_id=rec_id, surprise=surprise)
+
+    def _is_contradiction(self, fact: dict | None) -> bool:
+        if not fact:
+            return False
+        cur = self.structured.current(fact["subject"], fact["predicate"])
+        return cur is not None and normalize(cur.object) != normalize(fact["object"])
 
     def _note_session(self, session_id: str, timestamp: float) -> None:
         """Record the earliest timestamp seen per session index so the planner can map a
@@ -112,16 +142,21 @@ class CuratedBrain(MemoryBackend):
             if prev is None or timestamp < prev:
                 self._session_ts[idx] = timestamp
 
-    def _route_fact(self, fact: dict | None, rec: EpisodicRecord, timestamp: float) -> None:
-        """Route an extracted triple into the bi-temporal structured tier (PRD §6)."""
+    def _route_fact(self, fact: dict | None, episode_id: str | None,
+                    session_id: str, timestamp: float) -> None:
+        """Route an extracted triple into the bi-temporal structured tier (PRD §6).
+
+        Called for every fact-bearing observation regardless of the surprise gate's
+        decision; ``assert_fact`` is idempotent (reasserting a value is a no-op) so this
+        never duplicates rows but guarantees salient facts are never lost to the gate."""
         if not fact:
             return
         self.structured.assert_fact(
             fact_id=self._next_id("fact"),
             subject=fact["subject"], predicate=fact["predicate"], object=fact["object"],
             valid_from=timestamp, created_at=timestamp,
-            provenance={"episode_id": rec.id, "session_id": rec.session_id,
-                        "wall_ts": rec.wall_ts},
+            provenance={"episode_id": episode_id, "session_id": session_id,
+                        "wall_ts": timestamp},
         )
         self._entities.add(normalize(fact["subject"]))
 
@@ -196,8 +231,10 @@ class CuratedBrain(MemoryBackend):
     def reset(self) -> None:
         self._counter = 0
         self._episodes: list[EpisodicRecord] = []
+        self._ep_by_id: dict[str, EpisodicRecord] = {}
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
+        self.gate = SurpriseGate()
         self._entities: set[str] = set()
         self._session_ts: dict[int, float] = {}
 
@@ -213,7 +250,7 @@ class CuratedBrain(MemoryBackend):
             "episodic": [vars(r) for r in self._episodes],
             "structured": self.structured.to_dict(),
             "vector": self.vector.to_dict(),
-            "gate": {},
+            "gate": self.gate.to_dict(),
         }
 
     def snapshot(self) -> bytes:
@@ -225,11 +262,13 @@ class CuratedBrain(MemoryBackend):
         state = from_jsonable(json.loads(blob.decode("utf-8")))
         self._counter = state["counter"]
         self._episodes = [EpisodicRecord(**d) for d in state["episodic"]]
+        self._ep_by_id = {r.id: r for r in self._episodes}
         self.structured = StructuredTier()
         self.structured.load(state.get("structured", []))
         self.vector = VectorTier(self.embedder)
         if state.get("vector"):
             self.vector.load(state["vector"])
+        self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()
         # Rebuild derived planner state from the restored stores.
         self._entities = {normalize(f.subject) for f in self.structured.facts}
         self._session_ts = {}

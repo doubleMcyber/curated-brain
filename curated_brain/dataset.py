@@ -97,6 +97,59 @@ def _email(name: str) -> str:
     return f"{name.lower()}@example.com"
 
 
+_PARAPHRASE = {
+    "city": ["{s} lives in {o}.", "{s} resides in {o}.", "{s} is based in {o}.",
+             "{s}'s city is {o}.", "{s} currently lives in {o}."],
+    "role": ["{s} works as a {o}.", "{s}'s role is {o}.", "{s} is a {o}.",
+             "{s} has the role of {o}.", "{s} works as {o}."],
+    "email": ["{s}'s email is {o}.", "contact {s} at {o}.", "{s}'s email address is {o}.",
+              "reach {s} via {o}.", "{s} can be emailed at {o}."],
+    "project": ["{s} works on project {o}.", "{s} is assigned to {o}.",
+                "{s}'s project is {o}.", "{s} is building {o}.", "{s} leads {o}."],
+}
+
+
+def redundant_stream(seed: int = 0, *, n_distinct: int = 24, repeats: int = 12):
+    """A redundancy-heavy stream for the selectivity gate (AC-5).
+
+    Builds ``n_distinct`` distinct facts and restates each ``repeats`` times in paraphrase,
+    shuffled together. A good gate stores each distinct fact about once and reinforces or
+    discards the rest, so the discard rate approaches ``1 − 1/repeats`` with no salient loss.
+
+    Returns ``(observations, facts)`` where ``facts`` are the distinct ground-truth triples.
+    """
+    rng = random.Random(seed)
+    attrs = ["city", "role", "email", "project"]
+    n_people = max(1, n_distinct // len(attrs))
+
+    names = _NAMES[:n_people]
+    cities = rng.sample(_CITIES, n_people)
+    roles = rng.sample(_ROLES, n_people)
+    projects = rng.sample(_PROJECTS, n_people)
+
+    facts: list[dict] = []
+    for p, name in enumerate(names):
+        values = {"city": cities[p], "role": roles[p], "email": _email(name),
+                  "project": projects[p]}
+        for attr in attrs:
+            facts.append({"subject": name, "predicate": attr, "object": values[attr]})
+
+    items: list[dict] = []
+    for f in facts:
+        for _ in range(repeats):
+            tmpl = rng.choice(_PARAPHRASE[f["predicate"]])
+            items.append({"fact": f, "content": tmpl.format(s=f["subject"], o=f["object"])})
+    rng.shuffle(items)
+
+    observations: list[Observation] = []
+    for i, it in enumerate(items):
+        s = i // 10
+        observations.append(Observation(
+            session_id=f"s{s:03d}", seq=i % 10, wall_ts=BASE_TS + i * 60.0, actor="user",
+            content=it["content"], salient=True, redundant=False, fact=it["fact"]))
+    return observations, facts
+
+
 def generate(
     seed: int = 0,
     *,
