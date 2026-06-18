@@ -120,8 +120,16 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       *Bar:* load test ≥1e5 records meeting a stated recall@k + p95-latency bar.
 - [ ] **G. Observability, ops & cost.** Decision logging/tracing, metrics (size/discard/recall/$),
       budgets + backpressure, graceful provider failure. *Bar:* dashboards/metrics emitted for a full run.
-- [ ] **H. Robustness & hardening.** Property/fuzz tests, determinism story under real models,
-      long-horizon soak, security review of key handling + blob restore. *Bar:* fuzz suite green; soak holds.
+- [~] **H. Robustness & hardening.** *(suite + boundary validation landed — reviewer PASS 2026-06-18)*
+      - [x] `test_robustness.py`: seeded fuzz (unicode/control/oversized/empty) — never crashes;
+        deterministic under fuzz (incl. consolidate); snapshot/restore round-trips; supersede invariant.
+      - [x] **Reviewer found 5 real bugs by probing past the suite; all fixed + locked:** a non-finite
+        timestamp used to create an "open" fact invisible to as-of (**silent bi-temporal corruption**)
+        → now rejected; malformed `metadata.fact` / non-str observation/question → clear typed errors
+        instead of opaque KeyError/AttributeError. Boundary validation in `CuratedBrain.write/query`.
+      - [ ] Remaining: long-horizon soak; security review of blob-restore / key handling; determinism
+        story under real (nondeterministic) models.
+      *Bar:* fuzz suite green; soak holds.
 
 ### Track 3 — SHIP (adoption surface + narrative)
 - [ ] **E. Public API & DX.** Clean SDK facade, LangChain/LlamaIndex + **MCP server**, examples,
@@ -232,3 +240,7 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   quickstart runs. Gate 63 passed/4 skipped, ruff clean, Opus-4.8 reviewer PASS (README accurate,
   LICENSE valid, CI correct). Pivoted to unblocked SHIP groundwork because Track D is env-blocked.
   Remaining F: PyPI publish (needs maintainer creds), docs/CHANGELOG/CONTRIBUTING, type-check, coverage.
+- 2026-06-18 — Track H: robustness/property suite (`test_robustness.py`). The reviewer PASSed the
+  suite then found 5 real bugs by probing beyond it — all fixed + locked, incl. a **silent
+  bi-temporal corruption** (non-finite timestamp → un-queryable "open" fact). Added boundary
+  validation to `write`/`query` (fail-loud, clear typed errors). Gate 69 passed/4 skipped, ruff clean.

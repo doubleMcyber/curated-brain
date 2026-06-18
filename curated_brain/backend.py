@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import abc
 import json
+import math
 
 from curated_brain.consolidation import cluster_by_similarity, representative
 from curated_brain.fakes import DeterministicEmbedder
@@ -34,6 +35,16 @@ MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-con
 FREE_DEDUP_THRESHOLD = 0.85  # only genuine near-duplicate free-text episodes are merged
 
 SNAPSHOT_VERSION = 1
+
+
+def _validate_fact(fact) -> None:
+    """Reject a malformed caller-supplied fact at the boundary (fail-loud, clear message)
+    rather than letting it crash deep in routing or silently corrupt the structured tier."""
+    if not isinstance(fact, dict):
+        raise ValueError(f"metadata fact must be a dict, got {type(fact).__name__}")
+    for key in ("subject", "predicate", "object"):
+        if not isinstance(fact.get(key), str) or not fact[key]:
+            raise ValueError(f"metadata fact needs a non-empty str '{key}': {fact!r}")
 
 
 class MemoryBackend(abc.ABC):
@@ -90,8 +101,16 @@ class CuratedBrain(MemoryBackend):
     # ------------------------------------------------------------------ write path ---
     def write(self, observation: str, *, session_id: str, timestamp: float,
               metadata: dict | None = None) -> WriteReceipt:
+        if not isinstance(observation, str):
+            raise TypeError(f"observation must be str, got {type(observation).__name__}")
+        if not math.isfinite(timestamp):
+            # A non-finite wall_ts silently breaks every bi-temporal `valid_from <= t`
+            # comparison, leaving an "open" but un-queryable fact — reject it at the door.
+            raise ValueError(f"timestamp must be finite, got {timestamp!r}")
         meta = metadata or {}
         fact = meta.get("fact")
+        if fact is not None:
+            _validate_fact(fact)
         # Track B: derive facts from raw text when none were supplied. The first is the
         # "primary" fact driving contradiction/gate bookkeeping; every extracted fact is
         # routed to the structured tier below.
@@ -195,6 +214,10 @@ class CuratedBrain(MemoryBackend):
         """Hybrid retrieval (PRD §7): plan -> fetch structured + vector -> fuse, re-rank,
         supersede-filter. The exact current/as-of fact is surfaced first; superseded values
         are dropped so stale contradictions never reach the agent."""
+        if not isinstance(question, str):
+            raise TypeError(f"question must be str, got {type(question).__name__}")
+        if not math.isfinite(timestamp):
+            raise ValueError(f"timestamp must be finite, got {timestamp!r}")
         plan = self.planner.plan(question, entities=self._entities,
                                  session_ts=self._session_ts)
         lines: list[str] = []
