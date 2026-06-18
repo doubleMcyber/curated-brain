@@ -1,0 +1,151 @@
+"""The harness backend adapter (PRD §9) and the ``CuratedBrain`` implementation.
+
+This module defines the ``MemoryBackend`` ABC the eval harness drives, plus the concrete
+curated-memory layer. The implementation grows stage by stage; at every stage it stays
+byte-deterministic so ``snapshot -> restore`` round-trips exactly (AC-1).
+
+Stage 1 wires only the episodic store + a lexical query, enough to satisfy adapter
+conformance and determinism. Later stages plug in the structured tier, vector tier,
+surprise gate and consolidation worker behind the same interface.
+"""
+
+from __future__ import annotations
+
+import abc
+import json
+
+from curated_brain.fakes import DeterministicEmbedder
+from curated_brain.models import (
+    Citation,
+    ConsolidationReport,
+    EpisodicRecord,
+    Retrieval,
+    StoreStats,
+    WriteReceipt,
+)
+from curated_brain.util import count_tokens, jaccard
+
+SNAPSHOT_VERSION = 1
+
+
+class MemoryBackend(abc.ABC):
+    """The contract the Longitudinal Memory Eval Harness drives (PRD §9).
+
+    ``timestamp`` is always supplied by the caller — memory must never read the real
+    wall-clock — so runs are reproducible. ``consolidate`` lets the harness simulate
+    "sleep" between sessions; ``snapshot``/``restore`` make runs deterministic.
+    """
+
+    @abc.abstractmethod
+    def write(self, observation: str, *, session_id: str, timestamp: float,
+              metadata: dict | None = None) -> WriteReceipt: ...
+
+    @abc.abstractmethod
+    def query(self, question: str, *, session_id: str, timestamp: float,
+              k: int = 8) -> Retrieval: ...
+
+    @abc.abstractmethod
+    def consolidate(self) -> ConsolidationReport: ...
+
+    @abc.abstractmethod
+    def stats(self) -> StoreStats: ...
+
+    @abc.abstractmethod
+    def reset(self) -> None: ...
+
+    @abc.abstractmethod
+    def snapshot(self) -> bytes: ...
+
+    @abc.abstractmethod
+    def restore(self, blob: bytes) -> None: ...
+
+
+class CuratedBrain(MemoryBackend):
+    def __init__(self, embedder: DeterministicEmbedder | None = None, *,
+                 dim: int = 256, seed: int = 0) -> None:
+        self.embedder = embedder or DeterministicEmbedder(dim)
+        self.seed = seed
+        self.reset()
+
+    # ------------------------------------------------------------------ identifiers --
+    def _next_id(self, kind: str) -> str:
+        self._counter += 1
+        return f"{kind}-{self._counter:012d}"
+
+    # ------------------------------------------------------------------ write path ---
+    def write(self, observation: str, *, session_id: str, timestamp: float,
+              metadata: dict | None = None) -> WriteReceipt:
+        rec = EpisodicRecord(
+            id=self._next_id("ep"),
+            session_id=session_id,
+            seq=len(self._episodes),
+            wall_ts=timestamp,
+            actor=(metadata or {}).get("actor", "user"),
+            content=observation,
+            embed_model_id=self.embedder.model_id,
+            surprise=0.0,
+            provenance={"source": "write", "session_id": session_id},
+            last_seen_ts=timestamp,
+        )
+        self._episodes.append(rec)
+        return WriteReceipt(stored=True, reason="stored", record_id=rec.id, surprise=0.0)
+
+    # ------------------------------------------------------------------ query path ---
+    def query(self, question: str, *, session_id: str, timestamp: float,
+              k: int = 8) -> Retrieval:
+        scored = sorted(
+            self._episodes,
+            key=lambda r: (jaccard(question, r.content), r.wall_ts, r.id),
+            reverse=True,
+        )
+        top = [r for r in scored if jaccard(question, r.content) > 0.0][:k]
+        lines, citations = [], []
+        for i, r in enumerate(top, 1):
+            lines.append(f"[{i}] {r.content}")
+            citations.append(Citation(record_id=r.id, provenance=r.provenance,
+                                      valid_interval=(r.wall_ts, float("inf"))))
+        context = "\n".join(lines)
+        return Retrieval(context=context, citations=citations, tokens_in=count_tokens(context))
+
+    # ------------------------------------------------------------------ maintenance --
+    def consolidate(self) -> ConsolidationReport:
+        return ConsolidationReport(
+            episodes_in=len(self._episodes), claims_out=0, dupes_merged=0,
+            contradictions_resolved=0, pruned=0,
+        )
+
+    def stats(self) -> StoreStats:
+        return StoreStats(
+            episodic_count=len(self._episodes),
+            structured_count=0,
+            semantic_count=0,
+            bytes=len(self.snapshot()),
+            embed_model_id=self.embedder.model_id,
+        )
+
+    def reset(self) -> None:
+        self._counter = 0
+        self._episodes: list[EpisodicRecord] = []
+
+    # ------------------------------------------------------------------ persistence --
+    def _state(self) -> dict:
+        """Canonical, JSON-able state. The shape is fixed across stages; later stages
+        fill the currently-empty subsystem keys rather than changing the schema."""
+        return {
+            "version": SNAPSHOT_VERSION,
+            "config": {"embed_model_id": self.embedder.model_id, "dim": self.embedder.dim,
+                       "seed": self.seed},
+            "counter": self._counter,
+            "episodic": [vars(r) for r in self._episodes],
+            "structured": [],
+            "vector": {},
+            "gate": {},
+        }
+
+    def snapshot(self) -> bytes:
+        return json.dumps(self._state(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def restore(self, blob: bytes) -> None:
+        state = json.loads(blob.decode("utf-8"))
+        self._counter = state["counter"]
+        self._episodes = [EpisodicRecord(**d) for d in state["episodic"]]
