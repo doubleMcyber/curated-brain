@@ -192,6 +192,44 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   - Env reminder: LLM runs need `device="cpu"` (MPS bug) + `HF_HUB_OFFLINE=1` + a cached model;
     record cassettes for any CI-facing real-model behavior (HF weight egress is blocked here).
 
+## IMPROVEMENT PLAN — planning pass (2026-06-18, Opus reviewer-architect)
+
+**Critical insight: the path to winning Track D starts with LOCAL, offline code fixes, not a
+GPU.** Two components are silently coupled to the synthetic dataset and would make Curated
+Brain *lose* to the rivals on open-domain LongMemEval even on a capable box:
+
+1. **`retrieval.py` `Planner.plan` is dataset-coupled (#1 losing condition).** It recognizes
+   only 5 hardcoded predicates (email/city/role/project/manager) and hardwires multi-hop to
+   `manager`. On open-domain questions `plan.predicate` is `None` → `open_ended` → the
+   structured tier (CB's whole advantage) is **never consulted** → CB degrades to NaiveRAG and
+   loses. **Fix first, offline:** schema-driven planner (derive predicates from `self.structured`,
+   or LLM-route the question) + a fail-soft backstop (`query` tries a structured `resolve` for any
+   recognized entity even when predicate is None).
+2. **`eval.py` `candidates_for`/`extract_value` is a closed-set reader over `ds.people`** — it
+   *cannot* score an open-domain benchmark and using it on LongMemEval is a methodological error.
+   Track D must feed `Retrieval.context` to the **same shared judge LLM** used for every system
+   and score with LongMemEval's official metric. Keep the closed reader only for in-repo tests.
+
+**Accuracy lever (do 2nd, offline):** entity resolution + coreference. `normalize` is just
+`strip().lower()`, so `Erin`/`she`/`Ms. Smith` are distinct subjects → structured lookups miss.
+Worse, `extraction._supported` grounding *fights* coreference ("she moved to Vienna" → no fact).
+Add a per-session alias map + canonicalize subject/object against `self._entities`. Then move
+extraction to open-schema + constrained/JSON decoding + confidence (PRD "extraction confidence → gate").
+
+**Other ranked items:** real ANN behind `VectorIndex` with **over-fetch-then-filter** (a naive
+top-k ANN under-recalls under the entity/as-of filters — correctness, not just speed);
+entity-scope `_stale_objs`/`fuse` (a value stale for A but in B's context can be wrongly dropped —
+the `- open_vals` subtraction only partially mitigates); LLM-driven consolidation (`_merge_to_claim`
+seam exists, unused); concurrency/namespacing; SQLite-index the structured tier (linear scans today).
+
+**Highest-ROI quick wins:** an **OpenAI-compatible provider** in `providers.py` so CB + rivals
+share ONE model endpoint (fairest Track D, dodges local-CPU); **cost/token accounting** in
+`metrics()` (needed for the "≤ its cost" clause); mypy/pyright + coverage in CI.
+
+**Reprioritized order:** (0) de-couple planner+reader [local] → (1) entity resolution + open-schema
+extraction [local] → (2) OpenAI-compat provider + cost metrics → (3) Track D harness on a capable
+box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
+
 ## ENVIRONMENT NOTES (for resuming sessions — verified 2026-06-18)
 - Python 3.12.7; `torch` 2.5.1 with **MPS** (Apple GPU); `transformers`, `huggingface_hub`,
   `httpx`, `requests`, `sentence-transformers` (installed this session) present. `faiss`/
