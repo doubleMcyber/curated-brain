@@ -14,6 +14,7 @@ from __future__ import annotations
 import abc
 import json
 
+from curated_brain.consolidation import cluster_by_similarity, representative
 from curated_brain.fakes import DeterministicEmbedder
 from curated_brain.models import (
     Citation,
@@ -30,6 +31,7 @@ from curated_brain.util import count_tokens, from_jsonable, normalize, to_jsonab
 from curated_brain.vector import VectorTier
 
 MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-context)
+FREE_DEDUP_THRESHOLD = 0.85  # only genuine near-duplicate free-text episodes are merged
 
 SNAPSHOT_VERSION = 1
 
@@ -68,11 +70,11 @@ class MemoryBackend(abc.ABC):
 
 class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
-                 dim: int = 256, seed: int = 0) -> None:
+                 dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
-        self.gate = SurpriseGate()
+        self._gate_cfg = (gate or SurpriseGate()).to_dict()
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -107,6 +109,8 @@ class CuratedBrain(MemoryBackend):
                 surprise=surprise,
                 provenance={"source": "write", "session_id": session_id},
                 last_seen_ts=timestamp,
+                fact_key=(f"{normalize(fact['subject'])}|{normalize(fact['predicate'])}"
+                          f"|{normalize(fact['object'])}") if fact else None,
             )
             self._episodes.append(rec)
             self._ep_by_id[rec.id] = rec
@@ -214,16 +218,82 @@ class CuratedBrain(MemoryBackend):
 
     # ------------------------------------------------------------------ maintenance --
     def consolidate(self) -> ConsolidationReport:
-        return ConsolidationReport(
-            episodes_in=len(self._episodes), claims_out=0, dupes_merged=0,
-            contradictions_resolved=0, pruned=0,
+        """Compress the episodic tier (PRD §8). Fact-bearing episodes are grouped by their
+        exact ``(subject, predicate)``: current-value paraphrases merge into one semantic
+        claim (dedup), and outdated (superseded-value) raw episodes are pruned — the value
+        history lives non-lossily in the structured tier. Remaining free-text episodes have
+        only true near-duplicates merged. Structured facts and provenance are never touched,
+        so accuracy is preserved and the audit trail is intact."""
+        episodes_in = len(self._episodes)
+        current_obj = {(normalize(f.subject), normalize(f.predicate)): normalize(f.object)
+                       for f in self.structured.open_facts}
+
+        groups: dict[tuple[str, str], list[EpisodicRecord]] = {}
+        free: list[EpisodicRecord] = []
+        for r in self._episodes:
+            if r.fact_key:
+                subj, pred, _ = r.fact_key.split("|")
+                groups.setdefault((subj, pred), []).append(r)
+            else:
+                free.append(r)
+
+        new_eps: list[EpisodicRecord] = []
+        dupes_merged = claims_out = pruned = 0
+
+        for (subj, pred), members in groups.items():
+            cur = current_obj.get((subj, pred))
+            current_eps = [r for r in members if r.fact_key.split("|")[2] == cur]
+            for r in members:  # outdated raw episodes are compacted away
+                if r not in current_eps:
+                    self.vector.remove_by_rid(r.id)
+                    pruned += 1
+            if len(current_eps) > 1:
+                new_eps.append(self._merge_to_claim(current_eps))
+                dupes_merged += len(current_eps) - 1
+                claims_out += 1
+            elif current_eps:
+                new_eps.append(current_eps[0])
+
+        # Free-text episodes: only merge genuine near-duplicates (high threshold avoids
+        # collapsing distinct content); keep everything else.
+        for cluster in cluster_by_similarity([(self.embedder.embed(r.content), r) for r in free],
+                                             FREE_DEDUP_THRESHOLD):
+            if len(cluster) > 1:
+                new_eps.append(self._merge_to_claim(cluster))
+                dupes_merged += len(cluster) - 1
+                claims_out += 1
+            else:
+                new_eps.append(cluster[0])
+
+        self._episodes = new_eps
+        self._ep_by_id = {r.id: r for r in new_eps}
+        contradictions_resolved = sum(1 for f in self.structured.facts if not f.is_open)
+        return ConsolidationReport(episodes_in=episodes_in, claims_out=claims_out,
+                                   dupes_merged=dupes_merged,
+                                   contradictions_resolved=contradictions_resolved, pruned=pruned)
+
+    def _merge_to_claim(self, members: list[EpisodicRecord]) -> EpisodicRecord:
+        rep = representative(members)
+        for r in members:
+            self.vector.remove_by_rid(r.id)
+        claim = EpisodicRecord(
+            id=self._next_id("claim"), session_id=rep.session_id, seq=len(self._episodes),
+            wall_ts=rep.wall_ts, actor="system", content=rep.content,
+            embed_model_id=self.embedder.model_id, surprise=rep.surprise,
+            provenance={"source": "consolidation", "merged_from": [r.id for r in members]},
+            support_count=sum(r.support_count for r in members),
+            last_seen_ts=max(r.last_seen_ts for r in members),
+            tier="semantic", supports=[r.id for r in members],
         )
+        self.vector.add(rid=claim.id, text=claim.content, wall_ts=claim.wall_ts,
+                        session_id=claim.session_id, tier="semantic", entities=[])
+        return claim
 
     def stats(self) -> StoreStats:
         return StoreStats(
-            episodic_count=len(self._episodes),
+            episodic_count=sum(1 for r in self._episodes if r.tier == "episodic"),
             structured_count=len(self.structured.facts),
-            semantic_count=0,
+            semantic_count=sum(1 for r in self._episodes if r.tier == "semantic"),
             bytes=len(self.snapshot()),
             embed_model_id=self.embedder.model_id,
         )
@@ -234,7 +304,7 @@ class CuratedBrain(MemoryBackend):
         self._ep_by_id: dict[str, EpisodicRecord] = {}
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
-        self.gate = SurpriseGate()
+        self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._entities: set[str] = set()
         self._session_ts: dict[int, float] = {}
 

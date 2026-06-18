@@ -100,6 +100,10 @@ class VectorTier:
         self.index.remove(key)
         self.meta.pop(key, None)
 
+    def remove_by_rid(self, rid: str) -> None:
+        for key in [k for k, r in self.meta.items() if r.rid == rid]:
+            self.remove(key)
+
     def search(self, query, k: int = 8, *, t: float | None = None,
                entity: str | None = None, tier: str | None = None,
                window: tuple[float, float] | None = None) -> list[tuple[VectorRecord, float]]:
