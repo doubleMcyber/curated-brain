@@ -114,12 +114,24 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 ---
 
 ## CURRENT POSITION
-- Phase: **Track 1 PROVE, in progress.** Track A foundation landed (real provider seam +
-  cassette + reviewer PASS); the pipeline is no longer architecturally faked.
-- **Next concrete step:** finish Track A then start B — wire the **real LLM into consolidation**
-  + add the **logprob surprise estimator**, then **B**: extract `(subject,predicate,object)`
-  triples + entity resolution from **raw text** so the structured tier no longer depends on the
-  dataset's `metadata.fact` spoon-feeding. That unblocks D (LongMemEval).
+- Phase: **Track 1 PROVE, in progress.** Track A real-provider seam + cassette + re-embed
+  migration landed (2 reviewed commits); **live LLM verified on CPU**. The pipeline is no
+  longer architecturally faked; the embedder live run is the only env-blocked piece.
+- **Next concrete step → Track B (extraction), designed this session:**
+  1. `extraction.py` → `LLMExtractor(llm)`: prompt the LLM for `subject | predicate | object`
+     lines, parse → `[{subject,predicate,object}]`. This is the *real, general* path (proven
+     feasible: Qwen on CPU already emits clean triples).
+  2. Wire into `CuratedBrain.write`: when `metadata.fact` is absent and an extractor is
+     configured, derive facts from raw text via the extractor (so the structured tier no
+     longer depends on the dataset's spoon-fed `metadata.fact`).
+  3. **Honest offline test (no fake-regex win):** record REAL LLM extractions for a handful
+     of sentences into a committed **cassette fixture** (run once live via `CachedLLM(inner=…)`),
+     then the CI test *replays* those genuine outputs through `LLMExtractor` and asserts the
+     structured tier is populated correctly. Plus a `CB_LIVE` end-to-end test.
+  4. Add entity-resolution/canonicalization for `subject`/`object` (coreference is a stretch goal).
+  - Then **B-eval**: extraction precision/recall on a held-out set → unblocks **D (LongMemEval)**.
+  - Remaining Track A (can interleave): logprob surprise estimator; real-LLM consolidation summarizer.
+  - Env reminder: LLM runs need `device="cpu"` (MPS bug) + `HF_HUB_OFFLINE=1` + a cached model.
 
 ## ENVIRONMENT NOTES (for resuming sessions — verified 2026-06-18)
 - Python 3.12.7; `torch` 2.5.1 with **MPS** (Apple GPU); `transformers`, `huggingface_hub`,
