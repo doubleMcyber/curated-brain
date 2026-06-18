@@ -393,6 +393,10 @@ class CuratedBrain(MemoryBackend):
             "structured": self.structured.to_dict(),
             "vector": self.vector.to_dict(),
             "gate": self.gate.to_dict(),
+            # The session->timestamp map drives as-of-by-session queries and is built from
+            # ALL writes (incl. discarded), so it cannot be faithfully rebuilt from the stored
+            # episodes alone — persist it or restore() silently shifts C6 answers.
+            "session_ts": sorted(self._session_ts.items()),
         }
 
     def snapshot(self) -> bytes:
@@ -413,9 +417,23 @@ class CuratedBrain(MemoryBackend):
         self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()
         # Rebuild derived planner state from the restored stores.
         self._entities = {normalize(f.subject) for f in self.structured.facts}
-        self._session_ts = {}
-        for r in self._episodes:
-            self._note_session(r.session_id, r.wall_ts)
+        if "session_ts" in state:  # faithful restore of the as-of-by-session map
+            self._session_ts = {int(k): v for k, v in state["session_ts"]}
+        else:  # legacy snapshot: rebuild from stored episodes (lossy for discarded sessions)
+            self._session_ts = {}
+            for r in self._episodes:
+                self._note_session(r.session_id, r.wall_ts)
         # Operational counters describe *this instance's* activity, not the restored store,
         # so reset them — otherwise metrics() would report counts unrelated to the snapshot.
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
+
+    def save(self, path: str) -> None:
+        """Durably persist the whole store to ``path`` (survives a process restart). Thin,
+        deterministic wrapper over :meth:`snapshot` — the bytes are the canonical state."""
+        with open(path, "wb") as fh:
+            fh.write(self.snapshot())
+
+    def load(self, path: str) -> None:
+        """Reopen a store previously written by :meth:`save`, replacing current state."""
+        with open(path, "rb") as fh:
+            self.restore(fh.read())

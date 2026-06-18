@@ -115,8 +115,15 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       from a clean checkout. ← **the contender claim**
 
 ### Track 2 — PRODUCTIONIZE (make the numbers hold under load)
-- [ ] **C. Storage & scale.** Real ANN (hnswlib/faiss/sqlite-vec) + durable persistence
-      (SQLite + on-disk index) behind existing protocols; concurrency/async; namespacing.
+- [~] **C. Storage & scale.** *(durable persistence landed — reviewer PASS 2026-06-18)*
+      - [x] `CuratedBrain.save(path)`/`load(path)` — durable across process restarts; reopen test.
+      - [x] **Fixed a real restore-fidelity bug** the persistence test exposed: `_session_ts`
+        (the as-of-by-session map driving C6) was rebuilt only from *stored* episodes on restore,
+        losing 34/64 sessions + shifting 14 → C6 answers silently diverged after restore. Now
+        persisted in the snapshot (legacy fallback retained). Reviewer confirmed no other field
+        has the same latent issue (`_entities` is safe — facts route to structured regardless of gate).
+      - [ ] Remaining: real ANN (hnswlib/faiss) behind `VectorIndex` with over-fetch for filters
+        (changes `search()` — do carefully); concurrency/async; namespacing; the ≥1e5 load test.
       *Bar:* load test ≥1e5 records meeting a stated recall@k + p95-latency bar.
 - [~] **G. Observability, ops & cost.** *(metrics landed — reviewer PASS 2026-06-18)*
       - [x] `CuratedBrain.metrics()`: write-decision breakdown (stored/reinforced/discarded),
@@ -252,3 +259,7 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 - 2026-06-18 — Track G: `CuratedBrain.metrics()` observability (decision breakdown, discard_rate,
   store size). Reviewer PASS; addressed 2 nice-to-haves (cheap metrics without snapshot; reset on
   restore). Gate 73 passed/4 skipped, ruff clean.
+- 2026-06-18 — Track C: durable `save`/`load`. The reopen test exposed a real **restore-fidelity
+  bug** (`_session_ts` rebuilt only from stored episodes → C6 as-of answers diverged after restore);
+  fixed by persisting it in the snapshot. Reviewer PASS (quantified 34/64 sessions lost pre-fix;
+  confirmed no other field affected). Gate 74 passed/4 skipped, ruff clean.
