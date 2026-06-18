@@ -40,6 +40,18 @@ _CHITCHAT = [
     "{name} shared a meme in the team channel.",
 ]
 
+# Terse "topic distractors": they echo a probe's vocabulary (entity + attribute) but carry
+# NO answer value. To a pure-similarity store they look maximally relevant and crowd the
+# top-k, so naive RAG's recall/precision degrades — the classic RAG failure (PRD §1.1).
+# A structured tier is immune: it answers by exact (subject, predicate) lookup, not topic.
+_TERSE = {
+    "email": ["{name} email address", "What {name} email address",
+              "{name} email address what", "Email address {name}"],
+    "city": ["{name} city", "What city {name}", "{name} lives city", "City {name} lives"],
+    "role": ["{name} role", "What role {name}", "{name} role title", "Role {name}"],
+    "manager": ["{name} manager", "Who manages {name}", "Manager {name}", "{name} manager who"],
+}
+
 
 @dataclass
 class Observation:
@@ -91,6 +103,8 @@ def generate(
     n_people: int = 6,
     n_sessions: int = 64,
     noise_per_session: int = 4,
+    distractors_min: int = 3,
+    distractors_max: int = 15,
 ) -> Dataset:
     """Build the longitudinal dataset. Same seed + params => byte-identical output."""
     rng = random.Random(seed)
@@ -166,6 +180,16 @@ def generate(
         ru = person["role_update_session"]
         emit(ru, f"{name} was promoted to {person['new_role']}.",
              salient=True, redundant=False, fact=fact(name, "role", person["new_role"]))
+
+    # Topic distractors: valueless, maximally-on-topic lines per (person, attribute),
+    # scattered across sessions. A randomized count per pair gives natural variance, so a
+    # pure-similarity store recalls some buried facts and loses others (not all-or-nothing).
+    for person in people:
+        for templates in _TERSE.values():
+            for _ in range(rng.randint(distractors_min, distractors_max)):
+                s = rng.randrange(n_sessions)
+                emit(s, rng.choice(templates).format(name=person["name"]),
+                     salient=False, redundant=False, fact=None)
 
     # Noise: dominate the stream with near-duplicate restatements + chit-chat so the
     # gate has an >=80%-discardable redundancy-heavy stream to prove selectivity against.
