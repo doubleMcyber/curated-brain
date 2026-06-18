@@ -126,8 +126,13 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 ### Track 3 — SHIP (adoption surface + narrative)
 - [ ] **E. Public API & DX.** Clean SDK facade, LangChain/LlamaIndex + **MCP server**, examples,
       quickstart, typed config. *Bar:* quickstart runs from a clean env in <10 min.
-- [ ] **F. Release engineering.** LICENSE (Apache-2.0), README, docs site, CHANGELOG, CONTRIBUTING,
-      PyPI publish, CI matrix (pytest+ruff+type-check), coverage. *Bar:* `pip install` works; CI green.
+- [~] **F. Release engineering.** *(core surface landed — reviewer PASS 2026-06-18)*
+      - [x] **LICENSE** (Apache-2.0, matches Mem0/Letta/Zep), **README** (honest — explicitly does
+        NOT claim benchmark wins), **CI** (`.github/workflows/ci.yml`: ruff + pytest on py3.11/3.12).
+      - [x] `pip install -e .` verified (curated-brain 0.1.0); README quickstart runs as written.
+      - [ ] Remaining: **PyPI publish** (needs the maintainer's account/token — can't be done by the
+        agent), docs site, CHANGELOG, CONTRIBUTING, type-checking (mypy/pyright) gate, coverage.
+      *Bar:* `pip install` works ✅; CI green (workflow added; will be green on first push — gate is green locally).
 - [ ] **I. Positioning.** Write-up of the "memory is curation" thesis + benchmark table, comparison
       matrix vs rivals, demo, launch post. *Bar:* publishable report with reproducible numbers.
 
@@ -203,3 +208,8 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   surfaced honestly. Gate 63 passed/4 skipped, ruff clean, Opus-4.8 reviewer PASS (cassette
   verified genuine, A/B non-vacuous, bi-temporal correct, scoping honest). Full-harness B-eval +
   Track D (LongMemEval vs Mem0/Letta/Zep) remain — need external systems / heavy compute.
+- 2026-06-18 — Track F core surface: LICENSE (Apache-2.0), honest README (no overclaim of
+  benchmark wins), CI workflow (ruff+pytest on py3.11/3.12). `pip install -e .` verified; README
+  quickstart runs. Gate 63 passed/4 skipped, ruff clean, Opus-4.8 reviewer PASS (README accurate,
+  LICENSE valid, CI correct). Pivoted to unblocked SHIP groundwork because Track D is env-blocked.
+  Remaining F: PyPI publish (needs maintainer creds), docs/CHANGELOG/CONTRIBUTING, type-check, coverage.
