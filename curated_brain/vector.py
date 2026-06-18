@@ -126,6 +126,14 @@ class VectorTier:
                 break
         return out
 
+    def nearest(self, embedding: np.ndarray) -> tuple[VectorRecord, float] | None:
+        """The single most-similar stored record (for surprise/novelty scoring), or None."""
+        ranked = self.index.rank(np.asarray(embedding, dtype=np.float64))
+        if not ranked:
+            return None
+        key, score = ranked[0]
+        return self.meta[key], score
+
     def __len__(self) -> int:
         return len(self.meta)
 
