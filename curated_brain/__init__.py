@@ -10,6 +10,8 @@ scorable without any network access.
 """
 
 from curated_brain.backend import CuratedBrain, MemoryBackend
+from curated_brain.extraction import LLMExtractor
+from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.models import (
     Citation,
     ConsolidationReport,
@@ -19,10 +21,22 @@ from curated_brain.models import (
     StoreStats,
     WriteReceipt,
 )
+from curated_brain.protocols import LLM, Embedder
+from curated_brain.providers import SentenceTransformerEmbedder, TransformersLLM
 
 __all__ = [
+    # core
     "CuratedBrain",
     "MemoryBackend",
+    # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
+    "Embedder",
+    "LLM",
+    "DeterministicEmbedder",
+    "RuleBasedLLM",
+    "SentenceTransformerEmbedder",
+    "TransformersLLM",
+    "LLMExtractor",
+    # data types
     "EpisodicRecord",
     "Fact",
     "WriteReceipt",
