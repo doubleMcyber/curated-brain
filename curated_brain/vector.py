@@ -138,6 +138,21 @@ class VectorTier:
         key, score = ranked[0]
         return self.meta[key], score
 
+    def reembed(self, new_embedder) -> int:
+        """Re-embed every stored record's text under ``new_embedder`` (model upgrade,
+        PRD §12). The index is rebuilt at the new dimensionality; record metadata and keys
+        are preserved (non-lossy — only the vectors change). Returns the count migrated.
+
+        Deterministic: records are visited in insertion order, so a re-embed reproduces a
+        byte-identical index for the same inputs and model.
+        """
+        self.embedder = new_embedder
+        new_index = BruteForceIndex(new_embedder.dim)
+        for key, rec in self.meta.items():
+            new_index.add(key, new_embedder.embed(rec.text))
+        self.index = new_index
+        return len(self.meta)
+
     def __len__(self) -> int:
         return len(self.meta)
 

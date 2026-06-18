@@ -26,6 +26,7 @@ from curated_brain.protocols import LLM, Embedder
 from curated_brain.providers import SentenceTransformerEmbedder, TransformersLLM
 
 LIVE = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("sentence_transformers")
+LIVE_LLM = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("transformers")
 
 
 # ------------------------------------------------------------------- offline: seam ---
@@ -99,7 +100,60 @@ def test_recorded_cassette_drives_pipeline_offline():
     assert "Vienna" in r.context
 
 
+# ----------------------------------------------------- offline: re-embed migration ---
+def test_reembed_on_upgrade_migrates_all_vectors():
+    # Upgrading the embedding model must re-embed every record (new dimensionality),
+    # stamp the new model id, preserve recall, and stay byte-deterministic.
+    stream = [("Erin lives in Vienna", "s1"), ("Bob lives in Paris", "s1"),
+              ("Cara writes Rust", "s2")]
+
+    def fresh():
+        cb = CuratedBrain(embedder=DeterministicEmbedder(64), dim=64, seed=0)
+        for content, sid in stream:
+            cb.write(content, session_id=sid, timestamp=0.0)
+        return cb
+
+    cb, cb2 = fresh(), fresh()
+    n = len(cb.vector)
+    report = cb.reembed(DeterministicEmbedder(128))
+    cb2.reembed(DeterministicEmbedder(128))
+
+    assert report == {"reembedded": n, "from": "det-hash-64-v1", "to": "det-hash-128-v1"}
+    assert cb.vector.index.dim == 128
+    assert all(v.shape[0] == 128 for v in cb.vector.index._vecs.values())
+    assert all(r.embed_model_id == "det-hash-128-v1" for r in cb._episodes)
+    assert cb.stats().embed_model_id == "det-hash-128-v1"
+    # recall survives AND is served from the NEW model's vector space: a fresh 128-dim
+    # query must locate Erin's record via the migrated index (a no-op reembed would leave
+    # 64-dim vectors and raise on the dim-mismatched dot product — so this is load-bearing).
+    top = cb.vector.nearest(DeterministicEmbedder(128).embed("Where does Erin live?"))
+    assert top is not None and top[0].text == "Erin lives in Vienna"
+    assert "Vienna" in cb.query("Where does Erin live?", session_id="q",
+                                timestamp=1.0, k=4).context
+    # deterministic: identical inputs + same upgrade => byte-identical snapshot
+    assert cb.snapshot() == cb2.snapshot()
+
+
 # -------------------------------------------------------------------- live (opt-in) --
+@pytest.mark.skipif(not LIVE_LLM, reason="set CB_LIVE=1 with the 'local' extra + a cached model")
+def test_live_llm_extracts_a_triple():
+    # Genuine non-faked LLM run: a real cached chat model extracts a (subject|predicate|
+    # object) triple from raw text — the feasibility proof for Track B. CPU-forced because
+    # MPS mis-handles some models' grouped-query attention in this environment.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    model = os.environ.get("CB_LLM_MODEL", "Qwen/Qwen3.5-0.8B")
+    llm = TransformersLLM(model_name=model, device="cpu", max_new_tokens=48)
+    try:
+        out = llm.complete(
+            "Extract the fact as 'subject | predicate | object', output only that line.\n"
+            "Sentence: Erin moved to Vienna last spring.")
+    except Exception as e:  # cached model absent / unloadable in this env
+        pytest.skip(f"cached model {model} unavailable: {e}")
+    low = out.lower()
+    assert out.strip() and "erin" in low and "vienna" in low
+
+
 @pytest.mark.skipif(not LIVE, reason="set CB_LIVE=1 with the 'local' extra to run real-model tests")
 def test_live_bge_embedder_semantics():
     emb = SentenceTransformerEmbedder()

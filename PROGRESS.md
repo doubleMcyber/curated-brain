@@ -67,17 +67,24 @@ State: 50 tests pass, ruff clean, `git status` clean, 9 source modules + 9 test 
 Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per workstream below.
 
 ### Track 1 — PROVE (do first; most likely to invalidate the thesis)
-- [~] **A. Real local-model integration.** *(foundation done — reviewer PASS 2026-06-18)*
+- [~] **A. Real local-model integration.** *(2 increments landed — both reviewer PASS 2026-06-18)*
       - [x] Real providers behind the protocols: `providers.py` — `SentenceTransformerEmbedder`
         (bge/e5) + `TransformersLLM` (cached Qwen/Mistral); lazy, soft-dependency, unit-norm,
         greedy. Fakes remain the **default** test doubles, so the offline gate needs no model stack.
       - [x] Cassette record/replay (`cassette.py`) for reproducible real-model runs in CI.
-      - [x] `tests/test_providers.py` (5 offline always-run + 2 `CB_LIVE`-gated live); `[local]` extra.
-      - [x] Offline gate green (55 passed / 2 skipped), ruff clean, Opus-4.8 reviewer PASS.
-      - [ ] Live bge end-to-end *executed* (code+tests ready; weight download slow in this env — see Env notes).
-      - [ ] Remaining A scope: **logprob surprise estimator** (PRD §6 #2), **re-embed-on-upgrade**
-        migration, wire the **real LLM into consolidation** (replace `RuleBasedLLM` path).
+      - [x] `[local]` extra; `tests/test_providers.py` (6 offline always-run + 3 `CB_LIVE`-gated live).
+      - [x] **Re-embed-on-upgrade migration** — `VectorTier.reembed` + `CuratedBrain.reembed`;
+        non-lossy, deterministic (byte-identical snapshot); offline-tested.
+      - [x] **Live LLM run VERIFIED** — real cached `Qwen3.5-0.8B` (CPU) extracted
+        `Erin | moved | to Vienna` from raw text → also proves **Track B is feasible here**.
+        Captured as `test_live_llm_extracts_a_triple` (CB_LIVE-gated, passes in 24s).
+      - [x] Offline gate green (56 passed / 3 skipped), ruff clean, Opus-4.8 reviewer PASS ×2.
+      - [ ] **Live bge embedder run** — BLOCKED: HF LFS weight egress is blocked in this env
+        (config downloads, weights don't; bge not pre-cached). Code+test ready; runs where egress works.
+      - [ ] Remaining A scope: **logprob surprise estimator** (PRD §6 #2); wire the **real LLM into
+        consolidation** (replace the `RuleBasedLLM` summarizer path).
       *Bar:* non-faked end-to-end run (real embedder + real LLM) green; fakes retained as doubles.
+      *Status:* LLM half live-verified; embedder half code-complete + offline-proven, live-blocked by env egress.
 - [ ] **B. Ingestion intelligence.** Text→triple extraction, entity resolution/coreference,
       schema, extraction confidence; schema/grammar-constrained decoding to offset small-model
       weakness. *Bar:* structured tier populated from **raw text only** (no `metadata.fact`),
@@ -135,5 +142,9 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 - 2026-06-18 — Created. Recorded Stage 1–7 done, the proof→contender gap, locked decisions, and the 9-workstream roadmap.
 - 2026-06-18 — Track A foundation: real `providers.py` (bge/e5 + Transformers LLM) + `cassette.py`
   reproducibility layer + `test_providers.py` + `[local]` extra. Gate 55 passed/2 skipped, ruff
-  clean, Opus-4.8 reviewer PASS. Added Environment Notes. Remaining A: logprob estimator,
-  re-embed migration, real-LLM consolidation.
+  clean, Opus-4.8 reviewer PASS. Added Environment Notes. (commit `a080143`)
+- 2026-06-18 — Track A increment 2: re-embed-on-upgrade migration (`VectorTier.reembed` +
+  `CuratedBrain.reembed`) + captured a real live-LLM extraction proof (cached Qwen on CPU →
+  `Erin | moved | to Vienna`). Gate 56 passed/3 skipped, ruff clean, Opus-4.8 reviewer PASS.
+  Confirmed Track B feasible on CPU; confirmed bge-embedder live run blocked by HF egress + MPS
+  bug for some models (use device="cpu").

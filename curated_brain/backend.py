@@ -217,6 +217,20 @@ class CuratedBrain(MemoryBackend):
         return {normalize(f.object) for f in self.structured.facts if not f.is_open} - open_vals
 
     # ------------------------------------------------------------------ maintenance --
+    def reembed(self, new_embedder) -> dict:
+        """Migrate the store to a new embedding model (PRD §12 re-embed-on-upgrade).
+
+        Non-lossy: source text, structured facts and provenance are untouched — only the
+        vectors are recomputed and each record's ``embed_model_id`` is stamped with the new
+        model. Lets the layer survive an embedder upgrade without losing recall.
+        """
+        old = self.embedder.model_id
+        self.embedder = new_embedder
+        n = self.vector.reembed(new_embedder)
+        for r in self._episodes:
+            r.embed_model_id = new_embedder.model_id
+        return {"reembedded": n, "from": old, "to": new_embedder.model_id}
+
     def consolidate(self) -> ConsolidationReport:
         """Compress the episodic tier (PRD §8). Fact-bearing episodes are grouped by their
         exact ``(subject, predicate)``: current-value paraphrases merge into one semantic
