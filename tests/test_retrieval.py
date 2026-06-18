@@ -123,6 +123,47 @@ def test_planner_routes_exact_relational_temporal():
     assert nonsense.open_ended
 
 
+# ----------------------------------------------------- open-domain structured backstop ---
+def _brain_with_facts():
+    cb = CuratedBrain(seed=0)
+    for pred, obj in (("city", "Vienna"), ("role", "engineer"), ("email", "erin@x.com")):
+        cb.write(f"Erin {pred} {obj}.", session_id="s0", timestamp=0.0,
+                 metadata={"fact": {"subject": "Erin", "predicate": pred, "object": obj}})
+    return cb
+
+
+def test_open_domain_query_still_consults_structured_tier():
+    # A question that names a known entity but matches NO predicate keyword is open_ended;
+    # the planner would otherwise bypass the structured tier and degrade to vector-only.
+    cb = _brain_with_facts()
+    plan = cb.planner.plan("Tell me about Erin.", entities=cb._entities,
+                           session_ts=cb._session_ts)
+    assert plan.open_ended and plan.entity == "erin"  # precondition: the bypass case
+
+    ctx = cb.query("Tell me about Erin.", session_id="q", timestamp=1.0).context.lower()
+    # the backstop surfaces Erin's high-precision facts instead of returning nothing useful
+    assert "vienna" in ctx and "engineer" in ctx
+
+
+def test_backstop_reserves_room_for_vector_recall():
+    # With more structured facts than the budget, the backstop must not crowd out the
+    # vector slot entirely (it caps at MAX_CONTEXT_ITEMS - 1 structured lines).
+    cb = _brain_with_facts()
+    r = cb.query("What about Erin?", session_id="q", timestamp=1.0)
+    structured_lines = sum(1 for ln in r.context.splitlines() if "Erin's" in ln)
+    assert structured_lines <= 3  # MAX_CONTEXT_ITEMS (4) - 1 reserved for vector
+
+
+def test_backstop_inert_without_a_known_entity():
+    # No recognized entity -> the structured tier is correctly not consulted.
+    cb = _brain_with_facts()
+    plan = cb.planner.plan("Tell me something interesting.", entities=cb._entities,
+                           session_ts=cb._session_ts)
+    assert plan.open_ended and plan.entity is None
+    ctx = cb.query("Tell me something interesting.", session_id="q", timestamp=1.0).context
+    assert "Erin's" not in ctx  # no entity -> no structured backstop lines
+
+
 def test_fuse_drops_superseded_values():
     hits = [
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),

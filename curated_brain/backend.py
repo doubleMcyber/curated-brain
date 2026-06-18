@@ -232,6 +232,21 @@ class CuratedBrain(MemoryBackend):
                 lines.append(render_fact(plan, f))
                 citations.append(Citation(record_id=f.id, provenance=f.provenance,
                                           valid_interval=(f.valid_from, f.valid_to)))
+        elif plan.entity is not None:
+            # Open-domain backstop: the question names a known entity but matched no
+            # predicate keyword. Rather than bypass the structured tier entirely — which
+            # lets an open-domain question degrade to pure vector search, the main reason a
+            # hybrid store loses to plain RAG on open benchmarks — surface a few of that
+            # entity's high-precision current/as-of facts, reserving budget for vector recall.
+            budget = MAX_CONTEXT_ITEMS - 1  # keep >=1 slot for the vector hits below
+            for pred in self.structured.predicates_for(plan.entity):
+                if len(lines) >= budget:
+                    break
+                f = self.structured.resolve(plan.entity, pred, plan.as_of)
+                if f is not None:
+                    lines.append(render_fact(plan, f))
+                    citations.append(Citation(record_id=f.id, provenance=f.provenance,
+                                              valid_interval=(f.valid_from, f.valid_to)))
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=plan.entity)
         for it in fuse(vhits, now=timestamp, stale_objs=self._stale_objs()):
