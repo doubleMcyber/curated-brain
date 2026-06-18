@@ -205,9 +205,12 @@ def generate(
                 name = rng.choice(names)
                 content = rng.choice(_CHITCHAT).format(name=name)
                 emit(s, content, salient=False, redundant=False, fact=None)
-        # after a session, anything salient said in it becomes restatable noise
+        # After a session, salient lines become restatable noise — EXCEPT the stable
+        # email facts (the C1 long-range targets). Keeping them out of the restatement
+        # stream means they are stated once, early, and then fall out of a long-context
+        # window: long-range recall then genuinely separates curation from stuffing.
         for obs in sessions[s]:
-            if obs.salient:
+            if obs.salient and not (obs.fact and obs.fact["predicate"] == "email"):
                 known_facts.append(obs.content)
 
     observations = [obs for sess in sessions for obs in sess]

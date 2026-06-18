@@ -76,3 +76,74 @@ class NaiveRAG(MemoryBackend):
 
     def restore(self, blob: bytes) -> None:
         self.reset()
+
+
+class LongContext(MemoryBackend):
+    """Paste the most-recent history up to a fixed token window. Facts older than the
+    window fall out entirely — the long-range failure of context stuffing (PRD §9.1)."""
+
+    def __init__(self, *, window_tokens: int = 800) -> None:
+        self.window_tokens = window_tokens
+        self.reset()
+
+    def write(self, observation, *, session_id, timestamp, metadata=None) -> WriteReceipt:
+        self._n += 1
+        rid = f"lc-{self._n:012d}"
+        self._records.append((rid, observation, timestamp))
+        return WriteReceipt(stored=True, reason="stored", record_id=rid, surprise=1.0)
+
+    def query(self, question, *, session_id, timestamp, k=8) -> Retrieval:
+        visible = sorted((r for r in self._records if r[2] <= timestamp),
+                         key=lambda r: (r[2], r[0]), reverse=True)  # most recent first
+        lines, cites, used = [], [], 0
+        for rid, content, ts in visible:
+            tt = count_tokens(content)
+            if used + tt > self.window_tokens:
+                break
+            lines.append(content)
+            used += tt
+            cites.append(Citation(record_id=rid, provenance={"source": "long_context"},
+                                  valid_interval=(ts, float("inf"))))
+        ctx = "\n".join(lines)
+        return Retrieval(context=ctx, citations=cites, tokens_in=count_tokens(ctx))
+
+    def consolidate(self) -> ConsolidationReport:
+        return ConsolidationReport(len(self._records), 0, 0, 0, 0)
+
+    def stats(self) -> StoreStats:
+        return StoreStats(len(self._records), 0, 0, 0, "long_context")
+
+    def reset(self) -> None:
+        self._n = 0
+        self._records: list[tuple[str, str, float]] = []
+
+    def snapshot(self) -> bytes:
+        return b""
+
+    def restore(self, blob: bytes) -> None:
+        self.reset()
+
+
+class NoMemory(MemoryBackend):
+    """The frozen model alone — nothing is retained between turns (PRD §9.1)."""
+
+    def write(self, observation, *, session_id, timestamp, metadata=None) -> WriteReceipt:
+        return WriteReceipt(stored=False, reason="discarded", record_id=None, surprise=0.0)
+
+    def query(self, question, *, session_id, timestamp, k=8) -> Retrieval:
+        return Retrieval(context="", citations=[], tokens_in=0)
+
+    def consolidate(self) -> ConsolidationReport:
+        return ConsolidationReport(0, 0, 0, 0, 0)
+
+    def stats(self) -> StoreStats:
+        return StoreStats(0, 0, 0, 0, "no_memory")
+
+    def reset(self) -> None:
+        pass
+
+    def snapshot(self) -> bytes:
+        return b""
+
+    def restore(self, blob: bytes) -> None:
+        pass
