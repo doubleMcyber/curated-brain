@@ -85,10 +85,21 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         consolidation** (replace the `RuleBasedLLM` summarizer path).
       *Bar:* non-faked end-to-end run (real embedder + real LLM) green; fakes retained as doubles.
       *Status:* LLM half live-verified; embedder half code-complete + offline-proven, live-blocked by env egress.
-- [ ] **B. Ingestion intelligence.** Text→triple extraction, entity resolution/coreference,
-      schema, extraction confidence; schema/grammar-constrained decoding to offset small-model
-      weakness. *Bar:* structured tier populated from **raw text only** (no `metadata.fact`),
-      extraction F1 ≥ target on a held-out set.
+- [~] **B. Ingestion intelligence.** *(extractor landed — reviewer PASS 2026-06-18)*
+      - [x] `extraction.py` → `LLMExtractor`: schema-constrained few-shot prompt → parse
+        `subject | predicate | object`, dedup, cap. **Groundedness filter** (subject+object must
+        be word-level present in the source) as an anti-hallucination guard (PRD §12).
+      - [x] **Honest offline tests** (`test_extraction.py`): replay a committed cassette of
+        REAL recorded model completions (`tests/fixtures/extract_cassette.json`) — replay-miss
+        raises, so assertions are pinned to genuine output, not a regex. + `CB_LIVE` live test.
+      - [x] **Real finding (kept visible):** the 0.8B model is a mediocre extractor — few-shot
+        leaks exemplars and chit-chat hallucinates, both *killed by grounding*; predicate mapping
+        is imperfect (`Dan leads Apollo` → `role|leads`). Motivates a bigger model / better prompt for D.
+      - [ ] Wire the extractor into `CuratedBrain.write` (derive facts from raw text when
+        `metadata.fact` is absent) — core-write-path change, do carefully + keep all 59 green.
+      - [ ] Entity resolution / canonicalization + coreference; extraction confidence → gate.
+      - [ ] **B-eval:** extraction precision/recall on a held-out set (try Qwen3.5-2B for quality).
+      *Bar:* structured tier populated from **raw text only** (no `metadata.fact`), extraction F1 ≥ target.
 - [ ] **D. External evaluation.** LongMemEval harness; head-to-head vs Mem0/Letta/Zep on the
       same local model; report accuracy **and** cost/latency/size; ablations; reproducible.
       *Bar:* **Curated Brain ≥ each competitor on the headline metric at ≤ its cost**, reproducible
@@ -124,14 +135,17 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   2. Wire into `CuratedBrain.write`: when `metadata.fact` is absent and an extractor is
      configured, derive facts from raw text via the extractor (so the structured tier no
      longer depends on the dataset's spoon-fed `metadata.fact`).
-  3. **Honest offline test (no fake-regex win):** record REAL LLM extractions for a handful
-     of sentences into a committed **cassette fixture** (run once live via `CachedLLM(inner=…)`),
-     then the CI test *replays* those genuine outputs through `LLMExtractor` and asserts the
-     structured tier is populated correctly. Plus a `CB_LIVE` end-to-end test.
-  4. Add entity-resolution/canonicalization for `subject`/`object` (coreference is a stretch goal).
-  - Then **B-eval**: extraction precision/recall on a held-out set → unblocks **D (LongMemEval)**.
+  ✅ Steps 1 & 3 DONE this session (`LLMExtractor` + honest cassette test). **Next:**
+  2. **Wire the extractor into `CuratedBrain.write`** (the core-write-path change): when
+     `metadata.fact` is absent and an extractor is configured, derive facts from raw text.
+     Add an optional `extractor=` ctor arg (default None → unchanged behavior, all 59 stay green).
+     Then run the *whole longitudinal harness* with extraction ON (no `metadata.fact`) and see
+     how the C-category scores hold up vs the spoon-fed baseline — the real test of the thesis.
+  4. Entity resolution/canonicalization for `subject`/`object`; coreference (stretch).
+  - Then **B-eval** → unblocks **D (LongMemEval)**. Consider Qwen3.5-2B for better extraction.
   - Remaining Track A (can interleave): logprob surprise estimator; real-LLM consolidation summarizer.
-  - Env reminder: LLM runs need `device="cpu"` (MPS bug) + `HF_HUB_OFFLINE=1` + a cached model.
+  - Env reminder: LLM runs need `device="cpu"` (MPS bug) + `HF_HUB_OFFLINE=1` + a cached model;
+    record cassettes for any CI-facing real-model behavior (HF weight egress is blocked here).
 
 ## ENVIRONMENT NOTES (for resuming sessions — verified 2026-06-18)
 - Python 3.12.7; `torch` 2.5.1 with **MPS** (Apple GPU); `transformers`, `huggingface_hub`,
@@ -160,3 +174,8 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
   `Erin | moved | to Vienna`). Gate 56 passed/3 skipped, ruff clean, Opus-4.8 reviewer PASS.
   Confirmed Track B feasible on CPU; confirmed bge-embedder live run blocked by HF egress + MPS
   bug for some models (use device="cpu").
+- 2026-06-18 — Track B groundwork: `extraction.py` (`LLMExtractor`, few-shot + groundedness
+  anti-hallucination filter) + honest replay-cassette tests (`test_extraction.py`,
+  `tests/fixtures/extract_cassette.json`). Gate 59 passed/4 skipped, ruff clean, Opus-4.8 reviewer
+  PASS (verified fixture is genuine model output, tests non-vacuous). Surfaced the 0.8B model's
+  extraction weaknesses honestly. NOT yet wired into the write path (next).
