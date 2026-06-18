@@ -154,6 +154,29 @@ def test_backstop_reserves_room_for_vector_recall():
     assert structured_lines <= 3  # MAX_CONTEXT_ITEMS (4) - 1 reserved for vector
 
 
+def test_schema_driven_planner_routes_an_unhardcoded_predicate():
+    # A predicate the planner never hardcoded (not in PRED_KEYWORDS), recognized purely
+    # because it was STORED and its name appears in the question -> precise routing to the
+    # structured tier, not the dump-everything backstop.
+    cb = CuratedBrain(seed=0)
+    cb.write("Erin's hobby is painting.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Erin", "predicate": "hobby", "object": "painting"}})
+
+    # Without the stored-predicate vocab the planner cannot route "hobby" -> open_ended.
+    bare = cb.planner.plan("What is Erin's hobby?", entities=cb._entities,
+                           session_ts=cb._session_ts)
+    assert bare.open_ended
+
+    # With it, the planner routes precisely.
+    plan = cb.planner.plan("What is Erin's hobby?", entities=cb._entities,
+                           predicates=frozenset({"hobby"}), session_ts=cb._session_ts)
+    assert plan.entity == "erin" and plan.predicate == "hobby" and not plan.open_ended
+
+    # End-to-end: query() derives the vocab from the store and surfaces the exact value.
+    ctx = cb.query("What is Erin's hobby?", session_id="q", timestamp=1.0).context.lower()
+    assert "painting" in ctx
+
+
 def test_backstop_inert_without_a_known_entity():
     # No recognized entity -> the structured tier is correctly not consulted.
     cb = _brain_with_facts()

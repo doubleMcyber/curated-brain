@@ -166,9 +166,10 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
 
 ## CURRENT POSITION (after 2026-06-18 session — 7 reviewed commits)
 - **DONE-criteria status: 2 of 3 met.** ✅ `pip install` works · ✅ docs (README) + CI + LICENSE
-  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (79 passed/4
+  + **published public on GitHub** (`doubleMcyber/curated-brain`) · ✅ gate green (80 passed/4
   skipped) on a clean tree. ❌ **LongMemEval ≥ Mem0/Letta/Zep** — Track D, environment-blocked
-  (see BLOCKERS). Since: added the open-domain planner backstop (improvement-plan #1) toward D.
+  (see BLOCKERS). Since: open-domain planner backstop + schema-driven planner (improvement-plan #1)
+  toward D — the structured tier is no longer bypassed on open-domain questions.
 - Done this session: **A** (real local providers + cassette + re-embed; live LLM verified),
   **B** (extraction implemented + wired into write path; spoon-feeding crutch removed),
   scoped **B-eval** (extraction-ON matches spoon-fed on C1/C2/C5/C6), **F core** (LICENSE/README/CI/pip).
@@ -211,8 +212,14 @@ Brain *lose* to the rivals on open-domain LongMemEval even on a capable box:
    entity's high-precision structured facts when `open_ended` (capped, reserving a vector slot);
    `StructuredTier.predicates_for`. Reviewer instrumented the harness: backstop fires **0×** on the
    54 synthetic probes (all carry a recognized keyword) → AC-9 unchanged (C1–C6 1.0/1.0/.987/.906/1.0/1.0).
-   **Still open:** the *schema-driven / LLM-routed* planner (the backstop only hedges; it doesn't
-   recognize the predicate) and the open-domain reader in `eval.py` (#2 below).
+   **[x] Schema-driven planner DONE (2026-06-18, reviewer PASS).** `Planner.plan` now also recognizes
+   any predicate ACTUALLY STORED whose (single-word) name appears in the question (`query()` derives the
+   vocab from `self.structured.facts`), so un-hardcoded predicates ("hobby") route *precisely* instead of
+   falling to the backstop. Reviewer diffed every harness `QueryPlan` with/without the vocab → **0
+   differences** (the 5 dataset predicates are all already keyword-matched), AC-9 unchanged.
+   **Still open:** LLM-routing for multi-word/paraphrased predicates + coreference (single-token exact
+   match only today); auto-detect relation predicates for arbitrary multi-hop (only `manager` hardwired);
+   and the open-domain reader in `eval.py` (#2 below).
 2. **`eval.py` `candidates_for`/`extract_value` is a closed-set reader over `ds.people`** — it
    *cannot* score an open-domain benchmark and using it on LongMemEval is a methodological error.
    Track D must feed `Retrieval.context` to the **same shared judge LLM** used for every system
@@ -234,8 +241,8 @@ seam exists, unused); concurrency/namespacing; SQLite-index the structured tier 
 share ONE model endpoint (fairest Track D, dodges local-CPU); **cost/token accounting** in
 `metrics()` (needed for the "≤ its cost" clause); mypy/pyright + coverage in CI.
 
-**Reprioritized order:** (0) de-couple planner+reader [local] *(planner backstop landed; schema/LLM
-planner + open-domain reader still open)* → (1) entity resolution + open-schema extraction [local] →
+**Reprioritized order:** (0) de-couple planner+reader [local] *(backstop + schema-driven planner landed;
+LLM-routing/relation-autodetect + open-domain reader still open)* → (1) entity resolution + open-schema extraction [local] →
 (2) OpenAI-compat provider + cost metrics → (3) Track D harness on a capable box → (4) ANN +
 structured indexing + stale-scope → (5) LLM consolidation, concurrency, namespacing.
 
@@ -327,3 +334,10 @@ structured indexing + stale-scope → (5) LLM consolidation, concurrency, namesp
   ruff clean. **Opus-4.8 reviewer PASS** — independently instrumented `run_harness`: backstop fires
   **0×** on all 54 probes → AC-9 provably unchanged; zero bugs across as-of/render/budget/determinism
   edge cases. Branch `claude/open-domain-backstop`.
+- 2026-06-18 — Track B/D PROVE: **schema-driven planner** (improvement-plan #1, remaining half).
+  `Planner.plan` recognizes any stored predicate whose single-word name appears in the question
+  (vocab derived in `query()` from `self.structured.facts`); un-hardcoded predicates now route
+  precisely instead of hitting the backstop. +1 test (`test_schema_driven_planner_routes_an_unhardcoded_predicate`).
+  Gate 80 passed/4 skipped, ruff clean. **Opus-4.8 reviewer PASS** — diffed every harness `QueryPlan`
+  with/without the vocab: **0 differences**, C1–C6 identical (1.0/1.0/.987/.906/1.0/1.0); zero bugs.
+  Branch `claude/open-domain-backstop`.

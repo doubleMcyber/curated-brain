@@ -43,11 +43,19 @@ class QueryPlan:
 
 class Planner:
     def plan(self, question: str, *, entities: set[str],
+             predicates: frozenset[str] = frozenset(),
              session_ts: dict[int, float]) -> QueryPlan:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
 
         preds = [p for p, kws in PRED_KEYWORDS.items() if any(k in toks for k in kws)]
+        # Schema-driven: also recognize any predicate ACTUALLY STORED whose (single-word)
+        # name appears verbatim as a question token. This lifts the planner past the 5
+        # hardcoded vocab predicates so open-domain questions ("What is X's hobby?") route
+        # precisely to the structured tier instead of falling through to the backstop.
+        for p in sorted(predicates):
+            if p in toks and p not in preds:
+                preds.append(p)
         rel = [p for p in preds if p in _RELATION_PREDS]
         attr = [p for p in preds if p not in _RELATION_PREDS]
         hops: list[str] | None = None

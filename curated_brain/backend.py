@@ -219,8 +219,9 @@ class CuratedBrain(MemoryBackend):
             raise TypeError(f"question must be str, got {type(question).__name__}")
         if not math.isfinite(timestamp):
             raise ValueError(f"timestamp must be finite, got {timestamp!r}")
+        pred_vocab = frozenset(normalize(f.predicate) for f in self.structured.facts)
         plan = self.planner.plan(question, entities=self._entities,
-                                 session_ts=self._session_ts)
+                                 predicates=pred_vocab, session_ts=self._session_ts)
         lines: list[str] = []
         citations: list[Citation] = []
 
