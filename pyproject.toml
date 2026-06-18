@@ -7,6 +7,9 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
+# Real local-model providers (curated_brain/providers.py). Absent by default so the
+# offline gate runs on the deterministic fakes; install to un-fake the pipeline.
+local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
 
 [build-system]
 requires = ["setuptools>=68"]
