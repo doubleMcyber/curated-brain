@@ -7,11 +7,14 @@
 Last updated: 2026-06-19 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
-(runs fully offline) — **RAN 2026-06-19.** Result: **NOT a clean win vs `temporal_rag`** (CB loses
-recall 0.76 vs 0.92), but CB wins precision (0.63, best) + cost, ties contradiction (0.80), wins
-long-range recall by category. Stopped per the plan's "don't tune" rule; general fixes identified.
-Details: harness branch `claude/curated-brain-adapter` → `RESULTS_curated_brain.md`. CB-side work on
-branch `claude/heuristic-extractor`.
+(runs fully offline) — **RAN + IMPROVED 2026-06-19.** After 3 general-capability levers (multi-entity
+routing, relational patterns, recency coreference), CB now **wins or ties every quality metric vs
+`temporal_rag` EXCEPT overall recall** (0.88 vs 0.92): precision **0.79 (best)**, contradiction-resolution
+**1.00 (>0.80)**, staleness **0.00 (<0.06)**, answer 0.76 (tie), multi_hop/needle/contradiction-recall all
+tie at 1.00, long-range recall 0.83 (>0.67), cheapest cost. The lone recall deficit is the
+`recency_relevance` category, which needs definite-NP/ellipsis coreference we deliberately did NOT add
+(don't-tune rule). Harness branch `claude/curated-brain-adapter` → `RESULTS_curated_brain.md`; CB work on
+`claude/heuristic-extractor`.
 
 ---
 
@@ -401,6 +404,17 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   never form for the harness's other relations. Closing that needs GENERAL relation auto-detection
   (a predicate whose object is itself a known entity) — deferred deliberately to avoid drifting into
   benchmark-coupling; tracked as the next general lever alongside the history/recency-intent path.
+- 2026-06-19 — **Beat-the-references push (user-chosen): two general-capability commits, both reviewer
+  PASS, AC-9 exact throughout.** (1) Multi-entity backstop + relational extraction ("works at/for",
+  "is headquartered in", "located in"): `query()` now falls back to surfacing facts for EVERY named
+  entity when a plan is open-domain OR mis-keyworded (round-robin, budget-reserved) → `multi_hop`
+  recall 0.67→1.00, precision 0.63→0.71. (2) Recency-based pronoun coreference ("Their/His/Her current
+  X" → most-recent subject; stateful, reset-cleared) → `contradiction` recall 0.80→1.00,
+  contradiction-resolution 0.80→1.00 (beats TR), staleness 0.20→0.00 (beats TR), answer 0.68→0.76 (tie).
+  **Net: CB overall recall 0.76→0.88; CB now wins/ties every quality metric vs temporal_rag except
+  overall recall.** Remaining 0.04 deficit = `recency_relevance` (definite-NP/ellipsis coreference) —
+  NOT added (would be benchmark-coupling). Branch `claude/heuristic-extractor` (f01b654, 3075c28);
+  harness results on `claude/curated-brain-adapter`. Gate 92 passed/4 skipped, ruff clean.
 - 2026-06-18 — Track A: **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`).
   Stdlib-only HTTP, injectable `post` transport → offline-tested (exact wire format, L2-norm, protocol
   conformance, drives a CuratedBrain write/query). Enables a FAIR Track-D run (CB + rivals on one
