@@ -280,6 +280,17 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
 - **Run live model tests:** `CB_LIVE=1 pytest tests/test_providers.py -k live` (default gate skips them).
 
 ## BLOCKERS
+- **Named-rival run — TESTED 2026-06-19 (no longer just asserted).** `pip install mem0ai` SUCCEEDS
+  here (mem0 2.0.7; CB gate still green after the dep bump to numpy 2.2.6). Inspected mem0's factories:
+  an **offline path exists** — LLM via `langchain` provider + a HuggingFacePipeline over the cached
+  Qwen (ollama/lmstudio/vllm providers all need an absent server; the rest are cloud), embedder via
+  `langchain`/custom (so CB + mem0 can SHARE one deterministic embedder) or `fastembed`, vector store
+  via in-memory `chroma`. **BUT the only usable local model is the weak 0.8B Qwen on CPU.** Running
+  mem0 on that would (a) be a slow multi-hour CPU run and (b) produce a **misleading** "CB beats mem0"
+  — mem0 hamstrung by a tiny model, not an architecture result. A CREDIBLE/fair run needs a **capable
+  shared model** (an OpenAI-compatible endpoint+key, which CB's `OpenAICompatLLM` already supports, or a
+  GPU box). Crippling the rival to claim a win is exactly what the goal's integrity forbids — so this is
+  the genuine unblock: a capable shared model, then the run is fast, fair, and credible.
 - **Track D (LongMemEval head-to-head vs Mem0/Letta/Zep) — the one remaining DONE clause — is
   environment-blocked (substantiated 2026-06-18), not a code problem.** Three independent reasons:
   1. **Compute.** This is a laptop with a broken-for-these-models MPS, so LLM inference runs on
