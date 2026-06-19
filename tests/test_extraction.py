@@ -134,6 +134,24 @@ def test_heuristic_predicate_canonicalization_enables_supersede():
     assert a["predicate"] == b["predicate"] == "phone number"
 
 
+def test_heuristic_pronoun_coreference_supersedes():
+    # A contradiction update phrased with a leading possessive pronoun must resolve to the
+    # most-recent named subject (recency coreference) so it supersedes, not duplicates.
+    ext = HeuristicExtractor()
+    assert ext.extract("Quinn's previous preferred airline was Skybridge.") == [
+        {"subject": "Quinn", "predicate": "preferred airline", "object": "Skybridge"}]
+    # "Their" -> Quinn; same canonical predicate -> a supersede pair
+    assert ext.extract("Their current preferred airline is Windjet.") == [
+        {"subject": "Quinn", "predicate": "preferred airline", "object": "Windjet"}]
+    # leading adverbial + pronoun also resolves
+    ext.extract("After that, Laura's car model was pickup.")
+    assert ext.extract("Their current car model is wagon.") == [
+        {"subject": "Laura", "predicate": "car model", "object": "wagon"}]
+    # reset() clears the coreference context
+    ext.reset()
+    assert ext.extract("Their current car model is sedan.") == []  # nothing to resolve to
+
+
 def test_heuristic_drives_structured_tier_and_multiword_planner_routing():
     from curated_brain.backend import CuratedBrain
     from curated_brain.fakes import DeterministicEmbedder
