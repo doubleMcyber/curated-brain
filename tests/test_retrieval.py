@@ -187,6 +187,22 @@ def test_backstop_inert_without_a_known_entity():
     assert "Erin's" not in ctx  # no entity -> no structured backstop lines
 
 
+def test_multihop_query_cites_every_hop_fact():
+    # Multi-hop retrieval must surface the provenance of EVERY fact in the chain (not just
+    # the final answer), so the whole support set is attributable. Regression: the prior
+    # code cited only the last hop -> downstream recall over support sets was incomplete.
+    cb = CuratedBrain(seed=0)
+    cb.write("Alice's manager is Bob.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "manager", "object": "Bob"}})
+    cb.write("Bob lives in Berlin.", session_id="s1", timestamp=1.0,
+             metadata={"fact": {"subject": "Bob", "predicate": "city", "object": "Berlin"}})
+    r = cb.query("What city does Alice's manager live in?", session_id="q", timestamp=2.0)
+    assert "Berlin" in r.context  # final answer still surfaced
+    # both hops are cited (structured citations carry wall_ts in provenance)
+    structured_cites = [c for c in r.citations if "wall_ts" in c.provenance]
+    assert len(structured_cites) >= 2
+
+
 def test_fuse_drops_superseded_values():
     hits = [
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),

@@ -228,10 +228,17 @@ class CuratedBrain(MemoryBackend):
         lines: list[str] = []
         citations: list[Citation] = []
 
-        if not plan.open_ended:
-            f = (self.structured.resolve_path(plan.entity, plan.hops, plan.as_of)
-                 if plan.hops else
-                 self.structured.resolve(plan.entity, plan.predicate, plan.as_of))
+        if not plan.open_ended and plan.hops:
+            # Multi-hop: surface the final answer line, but cite EVERY fact in the chain so
+            # the whole support set is attributable (not just the last hop).
+            chain = self.structured.resolve_path_chain(plan.entity, plan.hops, plan.as_of)
+            if chain:
+                lines.append(render_fact(plan, chain[-1]))
+                for hf in chain:
+                    citations.append(Citation(record_id=hf.id, provenance=hf.provenance,
+                                              valid_interval=(hf.valid_from, hf.valid_to)))
+        elif not plan.open_ended:
+            f = self.structured.resolve(plan.entity, plan.predicate, plan.as_of)
             if f is not None:
                 lines.append(render_fact(plan, f))
                 citations.append(Citation(record_id=f.id, provenance=f.provenance,
