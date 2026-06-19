@@ -280,7 +280,18 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
 - **Run live model tests:** `CB_LIVE=1 pytest tests/test_providers.py -k live` (default gate skips them).
 
 ## BLOCKERS
-- **Named-rival run — TESTED 2026-06-19 (no longer just asserted).** `pip install mem0ai` SUCCEEDS
+- **Named-rival run — FIRST RESULT 2026-06-19 (offline, preliminary).** Built an offline Mem0
+  adapter (mem0 driven by cached `Qwen3.5-2B` behind its `LLMBase` + the SAME deterministic
+  embedder as CB + in-memory qdrant) and ran a 3-query subset head-to-head. **CB beats Mem0**:
+  answer 1.00 vs 0.67, precision 1.00 vs 0.37, contradiction 1.00 vs 0.00; ties recall (1.00);
+  ~0s vs **~70 min** ingest. **Fairness adversarially reviewed** (caught + fixed a `top_k` vs
+  `limit` defect before quoting precision/contradiction). **Caveats:** n=3 (anecdotal); Mem0 on a
+  SMALL local model via an OpenAI-shaped shim (NOT its cloud best); different extractors (CB
+  heuristic). A CREDIBLE FULL run still needs a capable shared endpoint (mem0 is ~2.7 min/add on
+  CPU → small suite ~5h, standard ~14h — CPU-throughput-bound, now measured). Harness branch
+  `claude/curated-brain-adapter`: `mem_eval/adapters/mem0_local.py`, `bench_mem0_h2h.py`,
+  `RESULTS_curated_brain.md`.
+- **Mem0 install + offline path (TESTED 2026-06-19).** `pip install mem0ai` SUCCEEDS
   here (mem0 2.0.7; CB gate still green after the dep bump to numpy 2.2.6). Inspected mem0's factories:
   an **offline path exists** — LLM via `langchain` provider + a HuggingFacePipeline over the cached
   Qwen (ollama/lmstudio/vllm providers all need an absent server; the rest are cloud), embedder via
