@@ -177,6 +177,23 @@ def test_schema_driven_planner_routes_an_unhardcoded_predicate():
     assert "painting" in ctx
 
 
+def test_backstop_surfaces_facts_for_every_named_entity():
+    # A question naming TWO known entities (no predicate keyword) must surface facts for
+    # BOTH, not just the first — the lever for multi-entity / chained-relation questions.
+    cb = CuratedBrain(seed=0)
+    cb.write("Quinn works at Umbrella.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Quinn", "predicate": "employer", "object": "Umbrella"}})
+    cb.write("Umbrella is headquartered in Cairo.", session_id="s1", timestamp=1.0,
+             metadata={"fact": {"subject": "Umbrella", "predicate": "headquarters",
+                                "object": "Cairo"}})
+    # "works" mis-keywords the plan to role (which Quinn lacks); the no-resolve fallback must
+    # still surface BOTH named entities' facts rather than dropping to vector-only.
+    ctx = cb.query("Where is Umbrella, the company Quinn works for, headquartered?",
+                   session_id="q", timestamp=2.0).context
+    assert "Cairo" in ctx                          # Umbrella's HQ fact surfaced
+    assert "Quinn" in ctx and "Umbrella" in ctx    # both entities surfaced
+
+
 def test_backstop_inert_without_a_known_entity():
     # No recognized entity -> the structured tier is correctly not consulted.
     cb = _brain_with_facts()

@@ -102,7 +102,9 @@ _POSSESSIVE_RE = re.compile(r"\b([A-Z][a-zA-Z]*)'s\s+(.+?)\s+(?:is|was|are|were|
 _VERB_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:moved|relocated)\s+to\s+(.+)"), "location"),
     (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:lives|resides)\s+in\s+(.+)"), "location"),
-    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+is\s+based\s+in\s+(.+)"), "location"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+is\s+(?:based|located)\s+in\s+(.+)"), "location"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+is\s+headquartered\s+in\s+(.+)"), "headquarters"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:works|worked)\s+(?:at|for)\s+(.+)"), "employer"),
     (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:works|worked)\s+as\s+(?:an?\s+)?(.+)"), "role"),
     (re.compile(r"\b([A-Z][a-zA-Z]*)\s+was\s+promoted\s+to\s+(?:an?\s+)?(.+)"), "role"),
     (re.compile(r"\b([A-Z][a-zA-Z]*)\s+reports\s+to\s+(.+)"), "manager"),

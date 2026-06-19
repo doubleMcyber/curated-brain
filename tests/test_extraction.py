@@ -112,6 +112,19 @@ def test_heuristic_extracts_possessive_and_verb_forms():
     assert ext.extract("The weather was pleasant and nothing happened.") == []
 
 
+def test_heuristic_extracts_relational_forms():
+    ext = HeuristicExtractor()
+    assert ext.extract("Quinn works at Umbrella.") == [
+        {"subject": "Quinn", "predicate": "employer", "object": "Umbrella"}]
+    assert ext.extract("Umbrella is headquartered in Cairo.") == [
+        {"subject": "Umbrella", "predicate": "headquarters", "object": "Cairo"}]
+    assert ext.extract("Acme is located in Berlin.") == [
+        {"subject": "Acme", "predicate": "location", "object": "Berlin"}]
+    # "works as" is still a role, not an employer (distinct preposition)
+    assert ext.extract("Dana works as a designer.") == [
+        {"subject": "Dana", "predicate": "role", "object": "designer"}]
+
+
 def test_heuristic_predicate_canonicalization_enables_supersede():
     # "current X" and "X" collapse to one predicate so an update supersedes rather than
     # duplicating — the bi-temporal contradiction behavior the benchmark rewards.
