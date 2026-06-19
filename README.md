@@ -29,11 +29,39 @@ Honest snapshot (see [`PROGRESS.md`](PROGRESS.md) for the live, detailed state):
 long-context, and no-memory baselines on every category C1–C6), plus a scoped extraction-ON
 vs spoon-fed capability eval.
 
-**Not done yet** (tracked in `PROGRESS.md`): the head-to-head **LongMemEval** benchmark against
-Mem0 / Letta / Zep (the headline "contender" proof — *not yet run*); production scale (real ANN
-at 10⁵–10⁶ records, durable persistence); packaging to PyPI; framework/MCP integrations. The
-goal is to compete with the best open-source memory systems — **the benchmark numbers do not
-exist yet**, and nothing here claims to beat them until they do.
+**Preliminary external result** (see Benchmark below): on an independent, fully-offline
+longitudinal-memory harness, Curated Brain is the **strongest backend on precision,
+contradiction-resolution, staleness, cost, and long-range recall** vs strong RAG references
+(naive/semantic/temporal RAG), trailing the best only by **0.04 on overall recall**.
+
+**Not done yet** (tracked in `PROGRESS.md`): the head-to-head against the **named systems
+Mem0 / Letta / Zep** (needs a shared LLM endpoint — *not yet run*; the result above is vs RAG
+references only); production scale (real ANN at 10⁵–10⁶ records); packaging to PyPI;
+framework/MCP integrations. Nothing here claims to beat the named systems until that runs.
+
+## Benchmark (preliminary)
+
+On an independent, **fully-offline & deterministic** longitudinal-memory harness
+([longitudinal-memory-eval-harness](https://github.com/doubleMcyber/longitudinal-memory-eval-harness)),
+Curated Brain vs the harness's contradiction-aware reference `temporal_rag` (standard suite, seed 42):
+
+| metric | Curated Brain | temporal_rag |
+|---|---|---|
+| precision@k | **0.79** | 0.54 |
+| contradiction-resolution | **1.00** | 0.80 |
+| staleness *(lower better)* | **0.00** | 0.06 |
+| answer accuracy | 0.76 | 0.76 *(tie)* |
+| recall@k | 0.88 | **0.92** |
+| cost / query | **lowest of all backends** | — |
+
+Curated Brain wins or ties **every quality metric except overall recall**, where it trails by
+0.04 — entirely one category (`recency_relevance`) that needs definite-NP/ellipsis coreference we
+deliberately did **not** special-case (no benchmark-tuning). It also wins long-range recall (0.83
+vs 0.67) and is the cheapest backend.
+
+**Scope:** this is vs strong RAG *references*, **not yet** the named systems (Mem0 / Letta / Zep)
+— that head-to-head needs a shared LLM endpoint and is the next milestone. Full table,
+per-category breakdown, and one-command reproduction: the harness repo's `RESULTS_curated_brain.md`.
 
 ## Install
 
