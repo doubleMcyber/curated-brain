@@ -113,6 +113,9 @@ _VERB_PATTERNS: list[tuple[re.Pattern, str]] = [
 # Split into clauses only at terminal punctuation FOLLOWED BY whitespace, so emails/decimals
 # ("a@b.com", "3.5") stay intact within a clause.
 _CLAUSE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+# A leading possessive pronoun (optionally after an adverbial clause like "After that,"),
+# resolved to the most-recent named subject — recency-based coreference.
+_PRONOUN_SUBJ_RE = re.compile(r"^\s*(?:[A-Za-z][^,]*,\s+)?(their|his|her|its)\s+", re.I)
 
 
 def _canon_predicate(attr: str) -> str:
@@ -138,18 +141,43 @@ class HeuristicExtractor:
 
     Same ``extract(text) -> list[{"subject","predicate","object"}]`` shape as
     :class:`LLMExtractor`, so it drops into ``CuratedBrain(extractor=...)`` unchanged.
+
+    **Stateful coreference:** a leading possessive pronoun ("Their/His/Her current X is Y")
+    is resolved to the most-recent named subject seen across calls (recency-based
+    coreference), so contradiction updates phrased with a pronoun still supersede. State is
+    cleared by :meth:`reset` (the consuming ``CuratedBrain.reset`` calls it).
     """
 
     def __init__(self, *, max_facts: int = 8) -> None:
         self.max_facts = max_facts
+        self._last_subject: str | None = None
+
+    def reset(self) -> None:
+        """Forget the coreference context (called when the surrounding store is reset)."""
+        self._last_subject = None
+
+    def _resolve_pronoun(self, clause: str) -> str:
+        """Replace a leading possessive pronoun with the most-recent named subject's
+        possessive ("Their X" -> "Quinn's X"), so the clause parses to a named fact.
+
+        Recency heuristic: the adverbial-prefix branch assumes no NAMED antecedent precedes
+        the pronoun in the same clause (it resolves to the prior subject, not one inside a
+        leading "Although Bob left, ..." clause) — acceptable for the common update phrasings."""
+        if self._last_subject is None:
+            return clause
+        m = _PRONOUN_SUBJ_RE.match(clause)
+        if not m:
+            return clause
+        return f"{clause[:m.start(1)]}{self._last_subject}'s {clause[m.end(1):].lstrip()}"
 
     def extract(self, text: str) -> list[dict]:
         facts: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
         for clause in _CLAUSE_SPLIT_RE.split(text):
-            fact = self._parse_clause(clause)
+            fact = self._parse_clause(self._resolve_pronoun(clause))
             if fact is None:
                 continue
+            self._last_subject = fact["subject"]  # track most-recent named subject
             key = (normalize(fact["subject"]), normalize(fact["predicate"]),
                    normalize(fact["object"]))
             if key in seen:

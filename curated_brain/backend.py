@@ -428,6 +428,8 @@ class CuratedBrain(MemoryBackend):
         self._counter = 0
         self._episodes: list[EpisodicRecord] = []
         self._ep_by_id: dict[str, EpisodicRecord] = {}
+        if self.extractor is not None and hasattr(self.extractor, "reset"):
+            self.extractor.reset()  # clear any coreference context tied to the old store
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
