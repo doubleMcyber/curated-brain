@@ -7,8 +7,11 @@
 Last updated: 2026-06-19 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
-(runs fully offline) — plan in `~/.claude/plans/cosmic-watching-giraffe.md`. Track A (extractor +
-planner) DONE + reviewer-PASS; next = the harness `curated_brain` adapter (provenance threading).
+(runs fully offline) — **RAN 2026-06-19.** Result: **NOT a clean win vs `temporal_rag`** (CB loses
+recall 0.76 vs 0.92), but CB wins precision (0.63, best) + cost, ties contradiction (0.80), wins
+long-range recall by category. Stopped per the plan's "don't tune" rule; general fixes identified.
+Details: harness branch `claude/curated-brain-adapter` → `RESULTS_curated_brain.md`. CB-side work on
+branch `claude/heuristic-extractor`.
 
 ---
 
@@ -374,6 +377,21 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   values (e.g. "14 Rua das Flores, Lisbon") are NOT dropped from vector context — the structured
   answer is clean but a stale episode can still surface as an item. Pre-existing; fix in the adapter
   phase (tokenize-subset or substring match, entity-scoped).
+- 2026-06-19 — **BENCHMARK Track B (harness adapter) + FIRST REAL HEAD-TO-HEAD.** Implemented the
+  `curated_brain` adapter in the harness (provenance threading via two ingest maps, NO CB core change;
+  superseded items dropped via CB's own bi-temporal state, not gold). Adapter is contract-clean (17/17),
+  deterministic, **adversarial-review PASS** (faithful + fair: 0 unmapped citations / 0 gold turns
+  wrongly excluded / no gold peeking; answer switched to top-1 to match baselines). **Result (standard,
+  seed 42, fully offline):** recall CB 0.76 vs temporal_rag 0.92; precision CB **0.63 (best of all)**;
+  contradiction CB 0.80 = TR 0.80 (RAG backends 0.10); staleness 0.20 vs 0.06; answer 0.64 vs 0.76;
+  cost CB **lowest**; long-range-recall by category CB **0.83 vs 0.67**. **Headline bar NOT met** (CB
+  loses recall) → **STOPPED per the plan's "don't tune to the benchmark" rule.** The losses are GENERAL,
+  non-tuning gaps: (1) multi-hop cites only the final hop (CB answers multi-hop *better*); (2) no
+  "originally/first" history-/recency-intent path; (3) extractor canonicalization misses on some
+  contradiction phrasings; (4) storage slope is a snapshot-JSON-verbosity artifact, not real bloat.
+  Harness branch `claude/curated-brain-adapter` → `RESULTS_curated_brain.md`. This is the project's
+  first REAL external head-to-head (vs strong RAG references, not yet Mem0/Letta/Zep): CB is
+  competitive, cheaper, more precise, contradiction-strong — with a clear general path to overtake.
 - 2026-06-18 — Track A: **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`).
   Stdlib-only HTTP, injectable `post` transport → offline-tested (exact wire format, L2-norm, protocol
   conformance, drives a CuratedBrain write/query). Enables a FAIR Track-D run (CB + rivals on one
