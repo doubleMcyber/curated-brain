@@ -10,7 +10,7 @@ scorable without any network access.
 """
 
 from curated_brain.backend import CuratedBrain, MemoryBackend
-from curated_brain.extraction import LLMExtractor
+from curated_brain.extraction import HeuristicExtractor, LLMExtractor
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.models import (
     Citation,
@@ -43,6 +43,7 @@ __all__ = [
     "OpenAICompatEmbedder",
     "OpenAICompatLLM",
     "LLMExtractor",
+    "HeuristicExtractor",
     # data types
     "EpisodicRecord",
     "Fact",

@@ -49,12 +49,14 @@ class Planner:
         entity = next((e for e in sorted(entities) if e in toks), None)
 
         preds = [p for p, kws in PRED_KEYWORDS.items() if any(k in toks for k in kws)]
-        # Schema-driven: also recognize any predicate ACTUALLY STORED whose (single-word)
-        # name appears verbatim as a question token. This lifts the planner past the 5
-        # hardcoded vocab predicates so open-domain questions ("What is X's hobby?") route
-        # precisely to the structured tier instead of falling through to the backstop.
+        # Schema-driven: also recognize any predicate ACTUALLY STORED when ALL of its
+        # non-stop content tokens appear in the question. This lifts the planner past the 5
+        # hardcoded vocab predicates AND handles multi-word predicates ("mailing address"),
+        # so open-domain questions route precisely to the structured tier instead of falling
+        # through to the backstop. Equivalent to a single-token match for one-word predicates.
         for p in sorted(predicates):
-            if p in toks and p not in preds:
+            ptoks = set(tokenize(p, drop_stop=True))
+            if ptoks and ptoks <= toks and p not in preds:
                 preds.append(p)
         rel = [p for p in preds if p in _RELATION_PREDS]
         attr = [p for p in preds if p not in _RELATION_PREDS]

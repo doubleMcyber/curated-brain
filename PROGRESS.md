@@ -4,8 +4,11 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-06-18 · Branch: `claude/open-domain-backstop` (off `main`)
+Last updated: 2026-06-19 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
+**Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
+(runs fully offline) — plan in `~/.claude/plans/cosmic-watching-giraffe.md`. Track A (extractor +
+planner) DONE + reviewer-PASS; next = the harness `curated_brain` adapter (provenance threading).
 
 ---
 
@@ -358,6 +361,19 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   Gate 81 passed/4 skipped, ruff clean. **Opus-4.8 reviewer PASS** — hand-verified every count, confirmed
   rejected-call cost-neutrality, 0-query avg guard, restore reset, determinism; consolidation exclusion
   documented (not a silent undercount); zero bugs. Branch `claude/open-domain-backstop`.
+- 2026-06-19 — **BENCHMARK Track A** (toward a preliminary head-to-head on the user's harness
+  `doubleMcyber/longitudinal-memory-eval-harness`, which runs fully offline): `HeuristicExtractor`
+  (deterministic, no-LLM `(subject,predicate,object)` parsing — possessive copula + general verb
+  patterns; predicate canonicalization strips temporal markers so updates supersede) + generalized
+  the schema-driven planner match from single-token to "all non-stop predicate tokens ⊆ question"
+  (multi-word predicates like "mailing address" now route precisely). +3 tests. Gate 88 passed/4
+  skipped, ruff clean. **Opus-4.8 reviewer PASS** — 20-sentence generality probe (general, not
+  overfit), 54/54 harness QueryPlans identical (AC-9 unchanged), over-match guards verified, zero
+  bugs. Branch `claude/heuristic-extractor`. **DISCOVERED (needed before the benchmark shows strong
+  staleness/precision):** `_stale_objs`/`fuse` supersede-filter is token-based, so MULTI-WORD stale
+  values (e.g. "14 Rua das Flores, Lisbon") are NOT dropped from vector context — the structured
+  answer is clean but a stale episode can still surface as an item. Pre-existing; fix in the adapter
+  phase (tokenize-subset or substring match, entity-scoped).
 - 2026-06-18 — Track A: **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`).
   Stdlib-only HTTP, injectable `post` transport → offline-tested (exact wire format, L2-norm, protocol
   conformance, drives a CuratedBrain write/query). Enables a FAIR Track-D run (CB + rivals on one

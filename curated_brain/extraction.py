@@ -13,6 +13,8 @@ extractor runs on a real local model, on a hosted model, or — for deterministi
 
 from __future__ import annotations
 
+import re
+
 from curated_brain.util import normalize, tokenize
 
 # Schema-constrained, few-shot prompt (the roadmap's mitigation for weak small-model
@@ -79,3 +81,94 @@ class LLMExtractor:
             if len(facts) >= self.max_facts:
                 break
         return facts
+
+
+# --------------------------------------------------------------------------------------
+# Heuristic (no-LLM) extractor — a deterministic, general pattern-based fallback.
+# --------------------------------------------------------------------------------------
+
+# Temporal markers stripped when canonicalizing a predicate phrase, so "current mailing
+# address", "previous mailing address" and "mailing address" collapse to ONE predicate and
+# the structured tier's supersede logic fires (mirrors the topic-key idea in curation refs).
+_TEMPORAL_MARKERS = frozenset(
+    "current previous old new latest former currently now recent earlier originally "
+    "first prior updated nowadays presently initially".split()
+)
+
+# Possessive-attribute copula: "Alice's mailing address is X", "After that, Bob's role was Y".
+# Non-greedy attribute, greedy object (which only needs to *contain* the value).
+_POSSESSIVE_RE = re.compile(r"\b([A-Z][a-zA-Z]*)'s\s+(.+?)\s+(?:is|was|are|were|will be)\s+(.+)")
+# Verb/copula forms mapped to a canonical predicate: (regex over a clause, predicate).
+_VERB_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:moved|relocated)\s+to\s+(.+)"), "location"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:lives|resides)\s+in\s+(.+)"), "location"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+is\s+based\s+in\s+(.+)"), "location"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+(?:works|worked)\s+as\s+(?:an?\s+)?(.+)"), "role"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+was\s+promoted\s+to\s+(?:an?\s+)?(.+)"), "role"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+reports\s+to\s+(.+)"), "manager"),
+    (re.compile(r"\b([A-Z][a-zA-Z]*)\s+is\s+an?\s+(.+)"), "role"),  # "Bob is a designer"
+]
+# Split into clauses only at terminal punctuation FOLLOWED BY whitespace, so emails/decimals
+# ("a@b.com", "3.5") stay intact within a clause.
+_CLAUSE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def _canon_predicate(attr: str) -> str:
+    """Canonical predicate key: content tokens minus temporal markers, space-joined.
+    'current mailing address' -> 'mailing address'; 'role' -> 'role' (empty -> '')."""
+    return " ".join(t for t in tokenize(attr, drop_stop=True) if t not in _TEMPORAL_MARKERS)
+
+
+def _clean_object(value: str) -> str:
+    """Trim surrounding whitespace and trailing sentence punctuation from an object value."""
+    return value.strip().rstrip(".!?,;: ").strip()
+
+
+class HeuristicExtractor:
+    """Deterministic, no-LLM ``(subject, predicate, object)`` extractor.
+
+    Parses naturalistic entity-attribute statements with a few general patterns (the same
+    family of surface forms a contradiction-aware RAG reference keys on) — no model, no
+    network, fully deterministic. Subjects/objects are substrings of the source by
+    construction, so it never hallucinates a fact that was not stated (no grounding pass
+    needed). Predicates are canonicalized (temporal markers stripped) so repeated/updated
+    assertions about the same (subject, attribute) supersede rather than duplicate.
+
+    Same ``extract(text) -> list[{"subject","predicate","object"}]`` shape as
+    :class:`LLMExtractor`, so it drops into ``CuratedBrain(extractor=...)`` unchanged.
+    """
+
+    def __init__(self, *, max_facts: int = 8) -> None:
+        self.max_facts = max_facts
+
+    def extract(self, text: str) -> list[dict]:
+        facts: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for clause in _CLAUSE_SPLIT_RE.split(text):
+            fact = self._parse_clause(clause)
+            if fact is None:
+                continue
+            key = (normalize(fact["subject"]), normalize(fact["predicate"]),
+                   normalize(fact["object"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            facts.append(fact)
+            if len(facts) >= self.max_facts:
+                break
+        return facts
+
+    def _parse_clause(self, clause: str) -> dict | None:
+        """First matching pattern wins; possessive form (most specific) is tried first."""
+        m = _POSSESSIVE_RE.search(clause)
+        if m:
+            subject, predicate, obj = m.group(1), _canon_predicate(m.group(2)), m.group(3)
+            if predicate and _clean_object(obj):
+                return {"subject": subject, "predicate": predicate, "object": _clean_object(obj)}
+        for pat, predicate in _VERB_PATTERNS:
+            m = pat.search(clause)
+            if m:
+                obj = _clean_object(m.group(2))
+                if obj:
+                    return {"subject": m.group(1), "predicate": predicate, "object": obj}
+        return None
