@@ -392,6 +392,15 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   Harness branch `claude/curated-brain-adapter` → `RESULTS_curated_brain.md`. This is the project's
   first REAL external head-to-head (vs strong RAG references, not yet Mem0/Letta/Zep): CB is
   competitive, cheaper, more precise, contradiction-strong — with a clear general path to overtake.
+- 2026-06-19 — **Multi-hop full-chain provenance** (general correctness fix): `query()` now cites
+  EVERY fact in a resolved hop chain (`StructuredTier.resolve_path_chain`), not just the final one,
+  so the whole support set is attributable. +1 test. Gate 89 passed/4 skipped, ruff clean. **Opus-4.8
+  reviewer PASS** (AC-9 C1–C6 unchanged incl. C5; resolvable→2 cites, unresolvable→0, no crash; zero
+  bugs). **Honest note:** this does NOT move the harness `multi_hop` recall — the bottleneck is
+  UPSTREAM: the planner hardwires the only relation to "manager" (`_RELATION_PREDS`), so hop chains
+  never form for the harness's other relations. Closing that needs GENERAL relation auto-detection
+  (a predicate whose object is itself a known entity) — deferred deliberately to avoid drifting into
+  benchmark-coupling; tracked as the next general lever alongside the history/recency-intent path.
 - 2026-06-18 — Track A: **OpenAI-compatible remote providers** (`OpenAICompatEmbedder`/`OpenAICompatLLM`).
   Stdlib-only HTTP, injectable `post` transport → offline-tested (exact wire format, L2-norm, protocol
   conformance, drives a CuratedBrain write/query). Enables a FAIR Track-D run (CB + rivals on one

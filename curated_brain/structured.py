@@ -101,6 +101,19 @@ class StructuredTier:
             cur = last.object
         return last
 
+    def resolve_path_chain(self, subject: str, predicates: list[str],
+                           t: float | None = None) -> list[Fact] | None:
+        """Like :meth:`resolve_path` but returns EVERY fact traversed along the chain (so each
+        hop's provenance can be surfaced for attribution), or ``None`` if any hop is unresolved."""
+        cur, chain = subject, []
+        for pred in predicates:
+            f = self.resolve(cur, pred, t)
+            if f is None:
+                return None
+            chain.append(f)
+            cur = f.object
+        return chain
+
     def history(self, subject: str, predicate: str) -> list[Fact]:
         """All facts (open + superseded) for (subject, predicate), oldest first."""
         key = (normalize(subject), normalize(predicate))
