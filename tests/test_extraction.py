@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from curated_brain.cassette import CachedLLM, Cassette
-from curated_brain.extraction import LLMExtractor
+from curated_brain.extraction import HeuristicExtractor, LLMExtractor
 from curated_brain.providers import TransformersLLM
 
 FIXTURE = Path(__file__).parent / "fixtures" / "extract_cassette.json"
@@ -95,6 +95,52 @@ def test_write_routes_every_extracted_fact_not_just_the_first():
     cb.write(text, session_id="s1", timestamp=0.0)
     assert cb.answer_structured("Dana", "project") == "Apollo"
     assert cb.answer_structured("Dana", "city") == "Oslo"
+
+
+# --------------------------------------------------- heuristic (no-LLM) extractor -------
+def test_heuristic_extracts_possessive_and_verb_forms():
+    ext = HeuristicExtractor()
+    assert ext.extract("Priya's mailing address is 88 Calle Mayor, Madrid.") == [
+        {"subject": "Priya", "predicate": "mailing address", "object": "88 Calle Mayor, Madrid"}]
+    assert ext.extract("Bob moved to Berlin.") == [
+        {"subject": "Bob", "predicate": "location", "object": "Berlin"}]
+    assert ext.extract("Dana works as a designer.") == [
+        {"subject": "Dana", "predicate": "role", "object": "designer"}]
+    assert ext.extract("Erin reports to Frank.") == [
+        {"subject": "Erin", "predicate": "manager", "object": "Frank"}]
+    # non-facts yield nothing — extraction is by-construction grounded (no hallucination)
+    assert ext.extract("The weather was pleasant and nothing happened.") == []
+
+
+def test_heuristic_predicate_canonicalization_enables_supersede():
+    # "current X" and "X" collapse to one predicate so an update supersedes rather than
+    # duplicating — the bi-temporal contradiction behavior the benchmark rewards.
+    ext = HeuristicExtractor()
+    a = ext.extract("Alice's current phone number is 555-0100.")[0]
+    b = ext.extract("Alice's phone number is 555-0200.")[0]
+    assert a["predicate"] == b["predicate"] == "phone number"
+
+
+def test_heuristic_drives_structured_tier_and_multiword_planner_routing():
+    from curated_brain.backend import CuratedBrain
+    from curated_brain.fakes import DeterministicEmbedder
+
+    cb = CuratedBrain(embedder=DeterministicEmbedder(64), dim=64, seed=0,
+                      extractor=HeuristicExtractor())
+    cb.write("Priya's mailing address is 14 Rua das Flores, Lisbon.",
+             session_id="s0", timestamp=0.0)  # raw text, NO metadata.fact
+    cb.write("Priya's mailing address is 88 Calle Mayor, Madrid.",
+             session_id="s1", timestamp=1.0)
+
+    # supersede: the current value wins, the stale one is closed in the structured tier
+    assert cb.answer_structured("Priya", "mailing address") == "88 Calle Mayor, Madrid"
+    # the generalized schema-driven planner routes a MULTI-WORD predicate precisely
+    plan = cb.planner.plan("What is Priya's current mailing address?", entities=cb._entities,
+                           predicates=frozenset({"mailing address"}), session_ts=cb._session_ts)
+    assert plan.entity == "priya" and plan.predicate == "mailing address" and not plan.open_ended
+    # end-to-end query surfaces the current value (vocab derived from the store inside query())
+    r = cb.query("What is Priya's current mailing address?", session_id="q", timestamp=2.0)
+    assert "Madrid" in r.context
 
 
 @pytest.mark.skipif(not LIVE_LLM, reason="set CB_LIVE=1 with the 'local' extra + a cached model")
