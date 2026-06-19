@@ -28,7 +28,13 @@ from curated_brain.models import (
 from curated_brain.retrieval import Planner, fuse, render_fact
 from curated_brain.structured import StructuredTier
 from curated_brain.surprise import REINFORCE, STORE, SurpriseGate
-from curated_brain.util import count_tokens, from_jsonable, normalize, to_jsonable
+from curated_brain.util import (
+    count_tokens,
+    from_jsonable,
+    normalize,
+    to_jsonable,
+    tokenize,
+)
 from curated_brain.vector import VectorTier
 
 MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-context)
@@ -228,6 +234,7 @@ class CuratedBrain(MemoryBackend):
         lines: list[str] = []
         citations: list[Citation] = []
 
+        hit = False
         if not plan.open_ended and plan.hops:
             # Multi-hop: surface the final answer line, but cite EVERY fact in the chain so
             # the whole support set is attributable (not just the last hop).
@@ -237,27 +244,38 @@ class CuratedBrain(MemoryBackend):
                 for hf in chain:
                     citations.append(Citation(record_id=hf.id, provenance=hf.provenance,
                                               valid_interval=(hf.valid_from, hf.valid_to)))
+                hit = True
         elif not plan.open_ended:
             f = self.structured.resolve(plan.entity, plan.predicate, plan.as_of)
             if f is not None:
                 lines.append(render_fact(plan, f))
                 citations.append(Citation(record_id=f.id, provenance=f.provenance,
                                           valid_interval=(f.valid_from, f.valid_to)))
-        elif plan.entity is not None:
-            # Open-domain backstop: the question names a known entity but matched no
-            # predicate keyword. Rather than bypass the structured tier entirely — which
-            # lets an open-domain question degrade to pure vector search, the main reason a
-            # hybrid store loses to plain RAG on open benchmarks — surface a few of that
-            # entity's high-precision current/as-of facts, reserving budget for vector recall.
+                hit = True
+
+        if not hit:
+            # Backstop: the question was open-domain, OR it routed to a predicate the entity
+            # doesn't have (a mis-keyworded plan, e.g. "works" -> role on a company question).
+            # Either way, don't fall straight to vector-only — surface high-precision facts
+            # for EVERY known entity named in the question (round-robin so a multi-entity
+            # question surfaces each), reserving budget for vector recall. This is the main
+            # reason a hybrid store loses to plain RAG on open benchmarks.
             budget = MAX_CONTEXT_ITEMS - 1  # keep >=1 slot for the vector hits below
-            for pred in self.structured.predicates_for(plan.entity):
+            qtoks = set(tokenize(question, drop_stop=False))
+            mentioned = [e for e in sorted(self._entities) if e in qtoks]
+            preds_by_entity = [self.structured.predicates_for(e) for e in mentioned]
+            depth = max((len(p) for p in preds_by_entity), default=0)
+            for i in range(depth):  # round-robin: each entity's i-th fact before any (i+1)-th
+                for ent, preds in zip(mentioned, preds_by_entity, strict=True):
+                    if i >= len(preds) or len(lines) >= budget:
+                        continue
+                    f = self.structured.resolve(ent, preds[i], plan.as_of)
+                    if f is not None:
+                        lines.append(render_fact(plan, f))
+                        citations.append(Citation(record_id=f.id, provenance=f.provenance,
+                                                  valid_interval=(f.valid_from, f.valid_to)))
                 if len(lines) >= budget:
                     break
-                f = self.structured.resolve(plan.entity, pred, plan.as_of)
-                if f is not None:
-                    lines.append(render_fact(plan, f))
-                    citations.append(Citation(record_id=f.id, provenance=f.provenance,
-                                              valid_interval=(f.valid_from, f.valid_to)))
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=plan.entity)
         for it in fuse(vhits, now=timestamp, stale_objs=self._stale_objs()):
