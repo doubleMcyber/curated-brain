@@ -166,7 +166,11 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           tok/s** (50 tok in 25 min, ~150× too slow for one scenario); the only fast model (1.7B) is
           too weak. Large file transfers are all blocked/truncated (Ollama registry, HF-LFS GGUF,
           GitHub-raw convert script), so no capable-model download / llama.cpp workaround either.
-          Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
+          Remaining local lever (documented, not pursued): `outlines` (installed) could force the
+          fast 1.7B to emit valid JSON via grammar-constrained decoding → a *valid same-model* 1.7B
+          comparison (what Track-D's "same local model" literally asks), but still a **weak**-Mem0,
+          not the **capable**-Mem0 the DONE bar wants — so it doesn't change the headline; the capable
+          path is endpoint-bound. Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
           vs temporal_rag 0.67/**0.53** ran fine — matches the full references result; only the
           named-rival LLM path is blocked.) **Conclusion proven end-to-end, not projected.**
         So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound, not impossible**: the adapters
