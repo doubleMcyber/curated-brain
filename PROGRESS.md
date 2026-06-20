@@ -192,9 +192,14 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         NOT claim benchmark wins), **CI** (`.github/workflows/ci.yml`: ruff + pytest on py3.11/3.12).
       - [x] `pip install -e .` verified (curated-brain 0.1.0); README quickstart runs as written.
       - [x] CHANGELOG.md + CONTRIBUTING.md.
+      - [x] **CHANGELOG completed (2026-06-19)** — now reflects bge/OpenAI-compat providers, heuristic
+        extractor + coreference, schema/multi-entity retrieval, HnswIndex ANN, MCP server, cost
+        metrics, and the honest benchmark scope. SHIP/F surface verified present: LICENSE (Apache-2.0),
+        README (+ benchmark section), CI, CHANGELOG, CONTRIBUTING; `console_scripts` entry point added.
       - [ ] Remaining: **PyPI publish** (needs the maintainer's account/token — can't be done by the
-        agent), docs site, type-checking (mypy/pyright) gate, coverage.
-      *Bar:* `pip install` works ✅; CI green (workflow added; will be green on first push — gate is green locally).
+        agent); docs site; coverage. **mypy gate deferred** — 53 errors today (dynamic `reset()` attr
+        pattern + lazy-None provider models); needs a real typing pass, not a quick win.
+      *Bar:* `pip install` works ✅; CI green (workflow added; gate is green locally).
 - [ ] **I. Positioning.** Write-up of the "memory is curation" thesis + benchmark table, comparison
       matrix vs rivals, demo, launch post. *Bar:* publishable report with reproducible numbers.
 
