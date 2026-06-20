@@ -94,8 +94,13 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         injectable `post` transport so they're offline-tested (exact wire format + L2-norm + protocol
         conformance verified). **Lets CB + Mem0/Letta/Zep share ONE endpoint+model for a fair Track-D
         run — and dodges the local-CPU bottleneck** (point everything at a hosted/vLLM endpoint).
-      - [ ] **Live bge embedder run** — BLOCKED: HF LFS weight egress is blocked in this env
-        (config downloads, weights don't; bge not pre-cached). Code+test ready; runs where egress works.
+      - [x] **Live bge embedder run — WORKS (2026-06-19; the "blocked" note was STALE).** bge-small
+        weights are cached (127MB) and load offline; `tests/test_providers.py -k live` → 3 passed
+        (semantics + end-to-end). **Finding:** plugging real bge into the CB harness adapter
+        (`CB_EMBEDDER=bge`) FIXES the paraphrase/lexgap category (0.00→1.00) the deterministic
+        double can't, and raises precision (0.79→0.84), but TRADES aggregate recall (0.88→0.84) on
+        the mixed standard suite (semantic spread displaces lexical gold) — honest: a real embedder
+        is not a free win on this suite. So Track A's real-embedder milestone is DONE.
       - [ ] Remaining A scope: **logprob surprise estimator** (PRD §6 #2); wire the **real LLM into
         consolidation** (replace the `RuleBasedLLM` summarizer path).
       *Bar:* non-faked end-to-end run (real embedder + real LLM) green; fakes retained as doubles.
