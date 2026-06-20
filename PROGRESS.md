@@ -180,7 +180,12 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
       - [x] Complete top-level API (`curated_brain/__init__.py` exports core + protocols + fakes +
         real providers + extractor; imports stay lazy — no torch at import). 3 runnable `examples/`
         (basic memory, belief-update, real-models), 2 offline ones smoke-tested in CI (`test_examples.py`).
-      - [ ] Remaining: LangChain/LlamaIndex memory adapter, an **MCP server**, typed config object.
+      - [x] **MCP server (`curated_brain/mcp_server.py`) — landed 2026-06-19, reviewer PASS.** Mounts
+        the memory layer on any agent host: tools `write`/`query`/`answer`/`consolidate`/`stats` over
+        a plain testable `MemoryService` (defaults to the heuristic extractor → raw text in; optional
+        on-disk persistence). FastMCP imported lazily (`[mcp]` extra; not in the default gate); console
+        script `curated-brain-mcp`. +4 tests. Gate 98 passed/4 skipped.
+      - [ ] Remaining: LangChain/LlamaIndex memory adapter, typed config object.
       *Bar:* quickstart runs from a clean env in <10 min.
 - [~] **F. Release engineering.** *(core surface landed — reviewer PASS 2026-06-18)*
       - [x] **LICENSE** (Apache-2.0, matches Mem0/Letta/Zep), **README** (honest — explicitly does
