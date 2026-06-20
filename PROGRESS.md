@@ -480,8 +480,10 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   gap — the remaining bge loss is `needle`, a surprise-gate/storage interaction, not retrieval (so a
   ranking change can't fix it). Honestly framed, not over-claimed. Gate 99 passed.
   **Remaining priorities (offline, general, NOT benchmark-tuning):** P1 entity resolution/canonicalization
-  (alias map — biggest general accuracy lever); P2 relation auto-detection (object-is-an-entity → any
-  multi-hop); **[x] P5 DONE (2026-06-19, reviewer PASS)** — multi-word supersede-filtering moved INTO core
+  (alias map — biggest general accuracy lever); **[x] P2 DONE (2026-06-19, reviewer PASS)** — relation
+  auto-detection (predicate whose object is a known entity → relational; passed to `Planner.plan` as
+  `relation_preds`) so multi-hop forms for ANY relation, not just "manager"; no-op on synthetic (AC-9
+  byte-identical, git-stash-confirmed). **[x] P5 DONE (2026-06-19, reviewer PASS)** — multi-word supersede-filtering moved INTO core
   (`_stale_token_sets`/`fuse` token-subset); the harness adapter's `_superseded_turns` workaround removed
   (staleness=0.00 byte-identical → core, not adapter — honesty wrinkle closed); AC-9 exact. P3 wire
   `HnswIndex.topk`+over-fetch into the tier (real end-to-end ANN speedup) + P7 index the structured tier →
