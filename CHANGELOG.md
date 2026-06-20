@@ -13,6 +13,10 @@ the project is pre-1.0, so the API may still change.
   the layer (and rival systems) can share one hosted/vLLM endpoint.
 - **Heuristic (no-LLM) extractor** (`HeuristicExtractor`): deterministic possessive/verb triple
   extraction, predicate canonicalization, and recency-based pronoun coreference.
+- **Entity resolution** (`curated_brain.resolve.EntityResolver`): conservative subject
+  canonicalization — "Erin" / "Erin Smith" / "Ms. Smith" resolve to one entity via honorific
+  stripping + exact component subsumption, gated on store-provable uniqueness, with NO fuzzy
+  matching (a false merge is structurally impossible).
 - Record/replay **cassette** layer for reproducible real-model runs in CI.
 - **Raw-text fact extraction** (`LLMExtractor`) with a groundedness anti-hallucination guard,
   wired into the write path (optional `extractor=`, off by default).

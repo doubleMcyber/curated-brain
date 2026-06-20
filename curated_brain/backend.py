@@ -25,6 +25,7 @@ from curated_brain.models import (
     StoreStats,
     WriteReceipt,
 )
+from curated_brain.resolve import EntityResolver
 from curated_brain.retrieval import Planner, fuse, render_fact
 from curated_brain.structured import StructuredTier
 from curated_brain.surprise import REINFORCE, STORE, SurpriseGate
@@ -124,7 +125,11 @@ class CuratedBrain(MemoryBackend):
         if not facts and self.extractor is not None:
             self._cost["extract_calls"] += 1
             facts = self.extractor.extract(observation)
-            fact = facts[0] if facts else None
+        # Entity resolution (P1): canonicalize each fact's SUBJECT to a stable key — copy first
+        # so the caller's metadata dict is never mutated. A byte no-op on single-token,
+        # honorific-free subjects (the synthetic harness), so AC-1/AC-9 stay byte-identical.
+        facts = [{**f, "subject": self._canonical_subject(f["subject"])} for f in facts]
+        fact = facts[0] if facts else None
         embedding = self.embedder.embed(observation)
         self._cost["embed_calls"] += 1
         self._cost["embed_tokens"] += count_tokens(observation)
@@ -204,18 +209,19 @@ class CuratedBrain(MemoryBackend):
             provenance={"episode_id": episode_id, "session_id": session_id,
                         "wall_ts": timestamp},
         )
-        self._entities.add(normalize(fact["subject"]))
+        # The entity set is owned by the resolver (registered when the subject was
+        # canonicalized in write()); _entities reads through to it — nothing to add here.
 
     # ----------------------------------------------------------- structured answers --
     def answer_structured(self, subject: str, predicate: str, *, at: float | None = None) -> str:
         """Exact / as-of-time answer from the structured tier (empty string if unknown)."""
-        f = self.structured.resolve(subject, predicate, at)
+        f = self.structured.resolve(self._resolver.canonical(subject), predicate, at)
         return f.object if f else ""
 
     def answer_path(self, subject: str, predicates: list[str], *,
                     at: float | None = None) -> str:
         """Multi-hop relational answer from the structured tier."""
-        f = self.structured.resolve_path(subject, predicates, at)
+        f = self.structured.resolve_path(self._resolver.canonical(subject), predicates, at)
         return f.object if f else ""
 
     # ------------------------------------------------------------------ query path ---
@@ -235,6 +241,10 @@ class CuratedBrain(MemoryBackend):
                                    if normalize(f.object) in self._entities)
         plan = self.planner.plan(question, entities=self._entities, predicates=pred_vocab,
                                  relation_preds=relation_preds, session_ts=self._session_ts)
+        # Entity resolution: map the matched entity token to its canonical subject key, so a
+        # question naming "Erin" or "Ms. Smith" reaches the "erin smith" facts (identity on the
+        # synthetic harness's single-token names).
+        cent = self._resolver.canonical(plan.entity) if plan.entity else None
         lines: list[str] = []
         citations: list[Citation] = []
 
@@ -242,7 +252,7 @@ class CuratedBrain(MemoryBackend):
         if not plan.open_ended and plan.hops:
             # Multi-hop: surface the final answer line, but cite EVERY fact in the chain so
             # the whole support set is attributable (not just the last hop).
-            chain = self.structured.resolve_path_chain(plan.entity, plan.hops, plan.as_of)
+            chain = self.structured.resolve_path_chain(cent, plan.hops, plan.as_of)
             if chain:
                 lines.append(render_fact(plan, chain[-1]))
                 for hf in chain:
@@ -250,7 +260,7 @@ class CuratedBrain(MemoryBackend):
                                               valid_interval=(hf.valid_from, hf.valid_to)))
                 hit = True
         elif not plan.open_ended:
-            f = self.structured.resolve(plan.entity, plan.predicate, plan.as_of)
+            f = self.structured.resolve(cent, plan.predicate, plan.as_of)
             if f is not None:
                 lines.append(render_fact(plan, f))
                 citations.append(Citation(record_id=f.id, provenance=f.provenance,
@@ -266,7 +276,9 @@ class CuratedBrain(MemoryBackend):
             # reason a hybrid store loses to plain RAG on open benchmarks.
             budget = MAX_CONTEXT_ITEMS - 1  # keep >=1 slot for the vector hits below
             qtoks = set(tokenize(question, drop_stop=False))
-            mentioned = [e for e in sorted(self._entities) if e in qtoks]
+            # Canonicalize matched tokens and dedupe (so "erin" and "smith" -> one "erin smith").
+            mentioned = sorted({self._resolver.canonical(e)
+                                for e in self._entities if e in qtoks})
             preds_by_entity = [self.structured.predicates_for(e) for e in mentioned]
             depth = max((len(p) for p in preds_by_entity), default=0)
             for i in range(depth):  # round-robin: each entity's i-th fact before any (i+1)-th
@@ -281,7 +293,7 @@ class CuratedBrain(MemoryBackend):
                 if len(lines) >= budget:
                     break
 
-        vhits = self.vector.search(question, k=k, t=timestamp, entity=plan.entity)
+        vhits = self.vector.search(question, k=k, t=timestamp, entity=cent)
         for it in fuse(vhits, now=timestamp, stale_token_sets=self._stale_token_sets()):
             if len(lines) >= MAX_CONTEXT_ITEMS:
                 break
@@ -447,7 +459,7 @@ class CuratedBrain(MemoryBackend):
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
-        self._entities: set[str] = set()
+        self._resolver = EntityResolver()  # owns the entity vocabulary (`_entities` reads through)
         self._session_ts: dict[int, float] = {}
         # Operational counters (observability, not core state — kept out of the snapshot).
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
@@ -459,6 +471,19 @@ class CuratedBrain(MemoryBackend):
         # keep the core deterministic) are intentionally not metered here.
         self._cost = {"embed_calls": 0, "embed_tokens": 0, "extract_calls": 0,
                       "queries": 0, "context_tokens_served": 0}
+
+    @property
+    def _entities(self) -> set[str]:
+        """Entity vocabulary the planner matches questions against — owned by the resolver
+        (canonical names + standalone single tokens + non-ambiguous component tokens)."""
+        return self._resolver.entities
+
+    def _canonical_subject(self, raw: str) -> str:
+        """Canonicalize a subject (entity resolution), preserving the original surface when no
+        merge to a different entity occurred — so non-resolved subjects keep their case (a byte
+        no-op for the common write), while a resolved partial takes the canonical key."""
+        c = self._resolver.resolve_and_register(raw)
+        return raw if normalize(raw) == c else c
 
     # ------------------------------------------------------------------ persistence --
     def _state(self) -> dict:
@@ -495,8 +520,11 @@ class CuratedBrain(MemoryBackend):
         if state.get("vector"):
             self.vector.load(state["vector"])
         self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()
-        # Rebuild derived planner state from the restored stores.
-        self._entities = {normalize(f.subject) for f in self.structured.facts}
+        # Rebuild derived planner state from the restored stores. Stored subjects are already
+        # canonical, so register them faithfully (single-token -> standalone, multi -> full).
+        self._resolver = EntityResolver()
+        for f in self.structured.facts:
+            self._resolver.register_canonical(f.subject)
         if "session_ts" in state:  # faithful restore of the as-of-by-session map
             self._session_ts = {int(k): v for k, v in state["session_ts"]}
         else:  # legacy snapshot: rebuild from stored episodes (lossy for discarded sessions)
