@@ -4,7 +4,7 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-06-19 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
+Last updated: 2026-06-20 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
 (runs fully offline) — **RAN + IMPROVED 2026-06-19.** After 3 general-capability levers (multi-entity
@@ -129,10 +129,24 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         stream — needs a stream-wide cassette (hours of CPU) or a faster runtime; try Qwen3.5-2B
         for better predicate mapping (the 0.8B drops `project` from "leads the Apollo project").
       *Bar:* structured tier populated from **raw text only** (no `metadata.fact`), extraction F1 ≥ target.
-- [ ] **D. External evaluation.** LongMemEval harness; head-to-head vs Mem0/Letta/Zep on the
+- [~] **D. External evaluation.** LongMemEval harness; head-to-head vs Mem0/Letta/Zep on the
       same local model; report accuracy **and** cost/latency/size; ablations; reproducible.
       *Bar:* **Curated Brain ≥ each competitor on the headline metric at ≤ its cost**, reproducible
       from a clean checkout. ← **the contender claim**
+      - [x] **Reproducible-from-checkout benchmark landed (2026-06-20, reviewer PASS).** `benchmark/`
+        in THIS repo: `run_offline.sh` (offline, ~1-2 min, harness pinned to commit `5e1e342`)
+        reproduces CB vs the shipped references exactly (recall 0.88, precision **0.79**, contradiction
+        **1.00**, staleness **0.00**, answer 0.76 — CB wins every quality axis but aggregate recall,
+        where it trails 0.88 vs 0.92 = the one `recency_relevance` category, deliberately not
+        special-cased). `benchmark/README.md` carries the table, the n=3 Mem0 head-to-head (CB beats
+        Mem0 on answer/precision/contradiction), honest caveats, and the exact path to finish the
+        full claim. Reviewer verified every number + that the loss is disclosed, not hidden.
+      - [ ] **Residual blocker (the full named-rival claim).** Needs (1) a capable shared
+        OpenAI-compatible endpoint (CB's `OpenAICompatLLM`/`Embedder` already ship — set
+        `OPENAI_BASE_URL`/`_API_KEY`); (2) Letta + Zep adapters in the harness (Mem0 + a Letta stub
+        exist; Zep needs its Docker server); (3) throughput for the full suite per system (Mem0-on-CPU
+        is ~5 h/system; a hosted endpoint removes the wall). Then one `run` per backend + `compare`.
+        **Hardware/endpoint-bound — not agent-provisionable in this environment.**
 
 ### Track 2 — PRODUCTIONIZE (make the numbers hold under load)
 - [~] **C. Storage & scale.** *(durable persistence landed — reviewer PASS 2026-06-18)*

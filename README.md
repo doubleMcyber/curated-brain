@@ -59,9 +59,12 @@ Curated Brain wins or ties **every quality metric except overall recall**, where
 deliberately did **not** special-case (no benchmark-tuning). It also wins long-range recall (0.83
 vs 0.67) and is the cheapest backend.
 
-**Scope:** this is vs strong RAG *references*, **not yet** the named systems (Mem0 / Letta / Zep)
-— that head-to-head needs a shared LLM endpoint and is the next milestone. Full table,
-per-category breakdown, and one-command reproduction: the harness repo's `RESULTS_curated_brain.md`.
+**Reproduce it yourself** (offline, ~1–2 min, no GPU/keys): `benchmark/run_offline.sh`.
+
+**Scope:** this is vs strong RAG *references*, plus a preliminary **n=3** win vs **Mem0** run
+offline; it is **not yet** the full named-rival claim (Mem0 / Letta / Zep on the whole suite),
+which needs a shared LLM endpoint. Full table, the Mem0 head-to-head, caveats, and the exact path
+to finish the named-rival run: [`benchmark/README.md`](benchmark/README.md).
 
 ## Install
 
