@@ -507,3 +507,9 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   `HnswIndex.topk`+over-fetch into the tier (real end-to-end ANN speedup) + P7 index the structured tier →
   P4 ≥1e5 soak test; P6 LangChain adapter; CI: run cassette tests in-gate + coverage. Defer P8 (Mem0
   speedup — low ROI on a weak model) and P9 (logprob surprise — no metric movement). Branch `claude/heuristic-extractor`.
+  **[x] P6 DONE** (LangChain Retriever). **[x] P7 DONE (2026-06-19, reviewer PASS)** — structured tier
+  indexed by `(subject,predicate)` (`_by_key`, same Fact objects as the list so in-place supersede stays
+  consistent; rebuilt on `load`; `to_dict` unchanged → snapshots byte-identical). Reads are O(1)-per-key
+  (10k-fact resolve in ~0.017s vs old O(n) scan); AC-9 byte-identical; index==scan verified (incl. 12
+  supersedes, mixed-case, restore). Soak/scale test landed (Track H). **Still open: P1 entity resolution
+  (biggest lever, false-merge risk); P3 ANN-into-tier over-fetch (interacts with P0 hybrid).**
