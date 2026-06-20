@@ -71,6 +71,12 @@ When (1)–(3) are available the run is one command per backend (`mem_eval.runne
 evidence the architecture wins on the quality axes that distinguish a memory layer from plain RAG:
 **precision, contradiction-resolution, and staleness.**
 
+**Why not just run it locally now?** Measured, not assumed (2026-06-20): this box *has* network
+(the clients pip-install) but **no Docker**, so Zep's server can't run at all. And Mem0 makes many
+LLM calls per add — a tiny fast model (`Qwen3-0.6B`) projects to **~11.5 h** for the small suite
+*and* scores 0.00 (too weak to be a fair rival), while a fair model (≥2B) is ~5 h for Mem0 alone.
+The bottleneck is a capable shared **endpoint**, which is exactly requirement (1).
+
 ### Honest caveats
 
 - **Embedder parity:** CB runs on its deterministic embedder; the references use the harness's

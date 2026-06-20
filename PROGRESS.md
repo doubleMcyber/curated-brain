@@ -141,12 +141,22 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         special-cased). `benchmark/README.md` carries the table, the n=3 Mem0 head-to-head (CB beats
         Mem0 on answer/precision/contradiction), honest caveats, and the exact path to finish the
         full claim. Reviewer verified every number + that the loss is disclosed, not hidden.
-      - [ ] **Residual blocker (the full named-rival claim).** Needs (1) a capable shared
-        OpenAI-compatible endpoint (CB's `OpenAICompatLLM`/`Embedder` already ship — set
-        `OPENAI_BASE_URL`/`_API_KEY`); (2) Letta + Zep adapters in the harness (Mem0 + a Letta stub
-        exist; Zep needs its Docker server); (3) throughput for the full suite per system (Mem0-on-CPU
-        is ~5 h/system; a hosted endpoint removes the wall). Then one `run` per backend + `compare`.
-        **Hardware/endpoint-bound — not agent-provisionable in this environment.**
+      - [ ] **Residual blocker — now MEASURED (2026-06-20), not assumed.** Probed the actual
+        environment instead of asserting "offline": network egress **is** available (`pip` reaches
+        PyPI; `letta` 0.16.8 installable), Mem0 runs locally, but a credible full named-rival run is
+        still out of reach, for quantified reasons:
+        - **Throughput/quality bind:** Mem0 issues *many* LLM calls per add. On a fast-enough tiny
+          model (`Qwen3-0.6B` + `/no_think`) one 2-turn scenario took ~350 s/add → **~11.5 h** for
+          the 118-add `small` suite, AND Mem0 scored **answer/contradiction 0.00** (too weak to be a
+          fair rival → an unfair strawman). A *fair* model (≥2B) is ~5 h for Mem0 **alone**.
+        - **Zep:** server needs **Docker (absent here)** or a cloud key (absent) — cannot run at all.
+        - **Letta:** pip-installable but a heavy MemGPT-server framework needing its own LLM backend;
+          slower than Mem0 on local CPU, not wired.
+        So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound**: it needs one capable shared
+        OpenAI-compatible endpoint (CB's `OpenAICompatLLM`/`Embedder` already target it via
+        `OPENAI_BASE_URL`/`_API_KEY`) + the Letta/Zep adapters. The Mem0 adapter now has
+        `MEM0_MODEL`/`MEM0_MAX_NEW_TOKENS`/`MEM0_NO_THINK` knobs so that run is a one-liner. Detail in
+        the harness `RESULTS_curated_brain.md` (§Measured feasibility). **Not agent-provisionable here.**
 
 ### Track 2 — PRODUCTIONIZE (make the numbers hold under load)
 - [~] **C. Storage & scale.** *(durable persistence landed — reviewer PASS 2026-06-18)*
