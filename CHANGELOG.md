@@ -35,6 +35,8 @@ the project is pre-1.0, so the API may still change.
 - Observability metrics (`CuratedBrain.metrics`): write-decision breakdown, discard rate, size,
   and **cost accounting** (embed/extract calls + tokens, `avg_context_tokens`).
 - Durable persistence (`CuratedBrain.save` / `load`).
+- **Complete PyPI package metadata** (`readme`, `license`, `authors`, `keywords`, `classifiers`,
+  `project.urls`) — the README now renders as the project long-description; `twine check` passes.
 - Robustness / property test suite; runnable `examples/`; Apache-2.0 LICENSE, README, CI.
 - **Soak/scale test** — 5000 redundant observations → ~174 episodic records + all 500 distinct
   facts (the store grows with distinct facts, not observations), with full recall after
