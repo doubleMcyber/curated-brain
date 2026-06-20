@@ -170,7 +170,10 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           fast 1.7B to emit valid JSON via grammar-constrained decoding → a *valid same-model* 1.7B
           comparison (what Track-D's "same local model" literally asks), but still a **weak**-Mem0,
           not the **capable**-Mem0 the DONE bar wants — so it doesn't change the headline; the capable
-          path is endpoint-bound. Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
+          path is endpoint-bound — and the env has **no usable hosted key either** (only a
+          `GEMINI_CLI_IDE_AUTH_TOKEN`, not a generative-API key; no ANTHROPIC/OPENAI/GEMINI key), so
+          neither local nor hosted capable inference is reachable from here. Built
+          `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
           vs temporal_rag 0.67/**0.53** ran fine — matches the full references result; only the
           named-rival LLM path is blocked.) **Conclusion proven end-to-end, not projected.**
         So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound, not impossible**: the adapters
