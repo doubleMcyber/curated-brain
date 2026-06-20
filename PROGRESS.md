@@ -481,8 +481,9 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   ranking change can't fix it). Honestly framed, not over-claimed. Gate 99 passed.
   **Remaining priorities (offline, general, NOT benchmark-tuning):** P1 entity resolution/canonicalization
   (alias map — biggest general accuracy lever); P2 relation auto-detection (object-is-an-entity → any
-  multi-hop); P5 move the entity-scoped multi-word stale filter INTO core (today the harness adapter
-  props up staleness=0.00 via `_superseded_turns` — an honesty wrinkle); P3 wire `HnswIndex.topk`+over-fetch
-  into the tier (real end-to-end ANN speedup) + P7 index the structured tier → P4 ≥1e5 soak test; P6
-  LangChain adapter; CI: run cassette tests in-gate + coverage. Defer P8 (Mem0 speedup — low ROI on a
-  weak model) and P9 (logprob surprise — no metric movement). Branch `claude/heuristic-extractor`.
+  multi-hop); **[x] P5 DONE (2026-06-19, reviewer PASS)** — multi-word supersede-filtering moved INTO core
+  (`_stale_token_sets`/`fuse` token-subset); the harness adapter's `_superseded_turns` workaround removed
+  (staleness=0.00 byte-identical → core, not adapter — honesty wrinkle closed); AC-9 exact. P3 wire
+  `HnswIndex.topk`+over-fetch into the tier (real end-to-end ANN speedup) + P7 index the structured tier →
+  P4 ≥1e5 soak test; P6 LangChain adapter; CI: run cassette tests in-gate + coverage. Defer P8 (Mem0
+  speedup — low ROI on a weak model) and P9 (logprob surprise — no metric movement). Branch `claude/heuristic-extractor`.
