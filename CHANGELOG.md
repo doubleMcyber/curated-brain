@@ -8,15 +8,30 @@ the project is pre-1.0, so the API may still change.
 ### Added
 - Real local-model providers — `SentenceTransformerEmbedder` (bge/e5) and `TransformersLLM`
   (local chat model) — behind the frozen-model protocols; the deterministic fakes remain the
-  default test doubles so the offline gate needs no model stack.
+  default test doubles so the offline gate needs no model stack. **bge-small verified offline**.
+- **OpenAI-compatible providers** (`OpenAICompatEmbedder` / `OpenAICompatLLM`, stdlib HTTP) so
+  the layer (and rival systems) can share one hosted/vLLM endpoint.
+- **Heuristic (no-LLM) extractor** (`HeuristicExtractor`): deterministic possessive/verb triple
+  extraction, predicate canonicalization, and recency-based pronoun coreference.
 - Record/replay **cassette** layer for reproducible real-model runs in CI.
 - **Raw-text fact extraction** (`LLMExtractor`) with a groundedness anti-hallucination guard,
   wired into the write path (optional `extractor=`, off by default).
+- **Schema-driven + multi-entity retrieval:** the planner recognizes any stored predicate
+  (incl. multi-word), and `query()` surfaces facts for every named entity when a plan
+  open-domains or mis-routes; multi-hop now cites the whole support chain.
+- **Real ANN backend** (`HnswIndex`, `[scale]` extra) behind `VectorIndex` — ~20× faster top-k
+  at scale; brute force stays the deterministic default.
+- **MCP server** (`curated_brain.mcp_server`, `[mcp]` extra) + `curated-brain-mcp` console
+  script — mount the memory layer on any agent host.
 - Re-embed-on-model-upgrade migration (`CuratedBrain.reembed`).
-- Observability metrics (`CuratedBrain.metrics`): write-decision breakdown, discard rate, size.
+- Observability metrics (`CuratedBrain.metrics`): write-decision breakdown, discard rate, size,
+  and **cost accounting** (embed/extract calls + tokens, `avg_context_tokens`).
 - Durable persistence (`CuratedBrain.save` / `load`).
 - Robustness / property test suite; runnable `examples/`; Apache-2.0 LICENSE, README, CI.
 - Complete top-level public API in `curated_brain/__init__` (imports stay lazy).
+- **Benchmarks** on an independent offline harness (see README): CB wins precision +
+  contradiction-resolution vs strong RAG references and (preliminary, small local model) vs
+  **Mem0**; competitive on recall. Not yet the full named-rival claim — see README scope.
 
 ### Fixed
 - **Silent bi-temporal corruption:** a non-finite timestamp created an "open" fact invisible
