@@ -225,5 +225,31 @@ def test_fuse_drops_superseded_values():
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),
         (VectorRecord(rid="2", text="Alice lives in Munich.", wall_ts=2.0, session_id="s"), 0.8),
     ]
-    out = fuse(hits, now=10.0, stale_objs={"berlin"})
+    out = fuse(hits, now=10.0, stale_token_sets=[frozenset({"berlin"})])
     assert [it.rid for it in out] == ["2"]  # the superseded "Berlin" record is filtered out
+
+
+def test_fuse_drops_multiword_stale_values():
+    # Token-subset matching catches a MULTI-WORD stale value (the old single-token
+    # intersection missed these), without dropping a record sharing only a common word.
+    hits = [
+        (VectorRecord(rid="1", text="Priya's address is 14 Rua das Flores, Lisbon.",
+                      wall_ts=1.0, session_id="s"), 0.9),
+        (VectorRecord(rid="2", text="Priya's address is 88 Calle Mayor, Madrid.",
+                      wall_ts=2.0, session_id="s"), 0.8),
+    ]
+    stale = [frozenset({"14", "rua", "das", "flores", "lisbon"})]
+    out = fuse(hits, now=10.0, stale_token_sets=stale)
+    assert [it.rid for it in out] == ["2"]  # the multi-word stale "…Lisbon" record is dropped
+
+
+def test_full_supersede_filter_in_core_no_stale_in_context():
+    # End-to-end: a multi-word value superseded in the structured tier must NOT surface in
+    # query context — proving supersede-filtering works in CORE (not just an adapter).
+    cb = CuratedBrain(seed=0)
+    for ts, obj in ((0.0, "14 Rua das Flores, Lisbon"), (1.0, "88 Calle Mayor, Madrid")):
+        cb.write(f"Priya's mailing address is {obj}.", session_id="s", timestamp=ts,
+                 metadata={"fact": {"subject": "Priya", "predicate": "mailing address",
+                                    "object": obj}})
+    ctx = cb.query("What is Priya's mailing address?", session_id="q", timestamp=2.0).context
+    assert "Madrid" in ctx and "Lisbon" not in ctx  # current surfaced, stale filtered in core

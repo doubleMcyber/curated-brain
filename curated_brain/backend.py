@@ -278,7 +278,7 @@ class CuratedBrain(MemoryBackend):
                     break
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=plan.entity)
-        for it in fuse(vhits, now=timestamp, stale_objs=self._stale_objs()):
+        for it in fuse(vhits, now=timestamp, stale_token_sets=self._stale_token_sets()):
             if len(lines) >= MAX_CONTEXT_ITEMS:
                 break
             lines.append(it.text)
@@ -293,14 +293,24 @@ class CuratedBrain(MemoryBackend):
         self._cost["context_tokens_served"] += tokens_in
         return Retrieval(context=context, citations=citations, tokens_in=tokens_in)
 
-    def _stale_objs(self) -> set[str]:
-        """Normalized object values to filter out of fused vector context: those that have
-        been superseded (closed in valid time) and are **not currently true for any
-        entity**. Subtracting the open values keeps this safe even if a value is later
-        re-asserted (A→B→A) or is current for one entity while stale for another — so we
-        never drop a statement of a value that is presently true."""
+    def _stale_token_sets(self) -> list[frozenset[str]]:
+        """Token sets of superseded object values to filter out of fused vector context: values
+        that have been closed in valid time and are **not currently true for any entity**.
+
+        Returns one token set per stale value (not a flat token set), so a record is dropped
+        only when it contains **all** tokens of a stale value — this catches MULTI-WORD stale
+        values ("14 Rua das Flores, Lisbon") that the old single-token intersection missed,
+        without dropping a record that merely shares one common word with a stale value.
+        Subtracting open values keeps a value that is presently true somewhere (A→B→A, or
+        current for one entity while stale for another) from ever being filtered."""
         open_vals = {normalize(f.object) for f in self.structured.facts if f.is_open}
-        return {normalize(f.object) for f in self.structured.facts if not f.is_open} - open_vals
+        out: list[frozenset[str]] = []
+        for f in self.structured.facts:
+            if not f.is_open and normalize(f.object) not in open_vals:
+                toks = frozenset(tokenize(f.object))
+                if toks:
+                    out.append(toks)
+        return out
 
     # ------------------------------------------------------------------ maintenance --
     def reembed(self, new_embedder) -> dict:
