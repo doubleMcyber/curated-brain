@@ -105,7 +105,8 @@ def _recency(now: float, ts: float) -> float:
 def fuse(vhits, *, now: float, stale_objs: set[str], w_rel: float = 1.0,
          w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
     """Rank vector candidates by relevance × recency × importance, dropping any record
-    that states a superseded value (supersede-filtering, PRD §7 step 3)."""
+    that states a superseded value (supersede-filtering, PRD §7 step 3). The ``sim`` carried
+    in from :meth:`VectorTier.search` is already the hybrid lexical+semantic score."""
     items: list[FusedItem] = []
     for r, sim in vhits:
         if stale_objs.intersection(tokenize(r.text)):

@@ -13,7 +13,12 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from curated_brain.util import normalize
+from curated_brain.util import jaccard, normalize
+
+# Hybrid-retrieval weights: blend embedding similarity (semantic) with lexical token-overlap
+# at the search ranking, so neither modality's blind spot dominates. General + deterministic.
+_W_SEM = 0.5
+_W_LEX = 0.5
 
 
 @runtime_checkable
@@ -170,10 +175,17 @@ class VectorTier:
         ``t`` enforces causality (only records with ``wall_ts <= t``); ``entity``/``tier``/
         ``window`` are the metadata filters the retrieval planner uses (PRD §7).
         """
-        qv = self.embedder.embed(query) if isinstance(query, str) else np.asarray(query)
+        qtext = query if isinstance(query, str) else None
+        qv = self.embedder.embed(query) if qtext is not None else np.asarray(query)
         ent = normalize(entity) if entity is not None else None
+        ranked = self.index.rank(qv)  # [(key, embedding-similarity)]
+        if qtext is not None:  # hybrid: re-rank by semantic + lexical BEFORE truncating to k
+            ranked = sorted(
+                ((key, _W_SEM * cos + _W_LEX * jaccard(qtext, self.meta[key].text))
+                 for key, cos in ranked),
+                key=lambda kc: (-kc[1], kc[0]))
         out: list[tuple[VectorRecord, float]] = []
-        for key, score in self.index.rank(qv):
+        for key, score in ranked:
             r = self.meta[key]
             if t is not None and r.wall_ts > t:
                 continue
