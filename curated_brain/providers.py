@@ -20,6 +20,8 @@ Design constraints:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 # Best-known output dimensions, so ``.dim`` is available without loading the model (which
@@ -48,7 +50,7 @@ class SentenceTransformerEmbedder:
         self.model_id = f"st:{model_name}"
         self.dim = _KNOWN_DIMS.get(model_name, 0)
         self._device = device
-        self._model = None  # lazily constructed real model
+        self._model: Any = None  # lazily constructed real model (external, untyped)
 
     def _ensure(self):
         if self._model is None:
@@ -90,8 +92,8 @@ class TransformersLLM:
         self.model_id = f"hf:{model_name}"
         self.max_new_tokens = max_new_tokens
         self._device = device
-        self._tok = None
-        self._model = None
+        self._tok: Any = None
+        self._model: Any = None
 
     def _ensure(self):
         if self._model is None:

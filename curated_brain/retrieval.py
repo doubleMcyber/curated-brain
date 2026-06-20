@@ -87,7 +87,8 @@ class Planner:
 def render_fact(plan: QueryPlan, fact: Fact) -> str:
     """A compact, citation-ready statement of the resolved fact for the context payload."""
     if plan.hops:
-        chain = " ".join([plan.entity, *plan.hops])
+        # render_fact is only called for a resolved (non-open-ended) plan, so entity is set.
+        chain = " ".join([plan.entity or "", *plan.hops])
         return f"{chain} is {fact.object}."
     if plan.as_of is not None:
         return f"{fact.subject}'s {fact.predicate} as of that time was {fact.object}."

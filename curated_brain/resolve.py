@@ -70,12 +70,12 @@ class EntityResolver:
         must refuse — not just within one index). Returns the full name, or None to refuse."""
         if s in self._singletons:
             return None
-        cands = set()
+        cands: set[str] = set()
         for index in (self._given, self._surname):
             full = index.get(s)
             if full is _AMBIGUOUS:
                 return None  # ambiguous in this role -> refuse (never promote via the other role)
-            if full is not None:
+            if isinstance(full, str):  # the only other stored value is _AMBIGUOUS (handled above)
                 cands.add(full)
         return next(iter(cands)) if len(cands) == 1 else None  # exactly one distinct -> promote
 

@@ -85,7 +85,7 @@ class HnswIndex:
     def __init__(self, dim: int, *, max_elements: int = 1024, ef_construction: int = 200,
                  m: int = 16, ef: int = 200, seed: int = 100) -> None:
         try:
-            import hnswlib
+            import hnswlib  # type: ignore[import-untyped]
         except ImportError as e:  # pragma: no cover - exercised only without the extra
             raise RuntimeError(
                 "HnswIndex requires hnswlib: pip install 'curated-brain[scale]'") from e

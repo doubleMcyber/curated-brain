@@ -53,7 +53,9 @@ def build_retriever(cb: CuratedBrain | None = None, *, k: int = 8):
         _cb: CuratedBrain = PrivateAttr()
 
         def __init__(self, cb: CuratedBrain, k: int, **kw) -> None:
-            super().__init__(k=k, **kw)
+            # `k` is a declared pydantic field above; mypy can't see BaseRetriever's
+            # dynamic __init__ accepting it, hence the targeted ignore.
+            super().__init__(k=k, **kw)  # type: ignore[call-arg]
             self._cb = cb
 
         @property

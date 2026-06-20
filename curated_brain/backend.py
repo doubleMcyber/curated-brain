@@ -87,6 +87,18 @@ class MemoryBackend(abc.ABC):
 
 
 class CuratedBrain(MemoryBackend):
+    # Core mutable state is (re)initialized in reset()/restore(), not __init__, so it is
+    # declared here for the type checker (annotations only — no runtime effect).
+    structured: StructuredTier
+    vector: VectorTier
+    gate: SurpriseGate
+    _resolver: EntityResolver
+    _episodes: list[EpisodicRecord]
+    _ep_by_id: dict[str, EpisodicRecord]
+    _session_ts: dict[int, float]
+    _decisions: dict[str, int]
+    _cost: dict[str, int]
+
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None) -> None:
@@ -249,9 +261,10 @@ class CuratedBrain(MemoryBackend):
         citations: list[Citation] = []
 
         hit = False
-        if not plan.open_ended and plan.hops:
+        if not plan.open_ended and plan.hops and cent is not None:
             # Multi-hop: surface the final answer line, but cite EVERY fact in the chain so
-            # the whole support set is attributable (not just the last hop).
+            # the whole support set is attributable (not just the last hop). cent is non-None
+            # here — a non-open-ended plan always names an entity (normalize() needs a str).
             chain = self.structured.resolve_path_chain(cent, plan.hops, plan.as_of)
             if chain:
                 lines.append(render_fact(plan, chain[-1]))
@@ -259,7 +272,7 @@ class CuratedBrain(MemoryBackend):
                     citations.append(Citation(record_id=hf.id, provenance=hf.provenance,
                                               valid_interval=(hf.valid_from, hf.valid_to)))
                 hit = True
-        elif not plan.open_ended:
+        elif not plan.open_ended and cent is not None and plan.predicate is not None:
             f = self.structured.resolve(cent, plan.predicate, plan.as_of)
             if f is not None:
                 lines.append(render_fact(plan, f))
@@ -368,7 +381,8 @@ class CuratedBrain(MemoryBackend):
 
         for (subj, pred), members in groups.items():
             cur = current_obj.get((subj, pred))
-            current_eps = [r for r in members if r.fact_key.split("|")[2] == cur]
+            current_eps = [r for r in members
+                           if r.fact_key and r.fact_key.split("|")[2] == cur]
             for r in members:  # outdated raw episodes are compacted away
                 if r not in current_eps:
                     self.vector.remove_by_rid(r.id)
@@ -452,15 +466,15 @@ class CuratedBrain(MemoryBackend):
 
     def reset(self) -> None:
         self._counter = 0
-        self._episodes: list[EpisodicRecord] = []
-        self._ep_by_id: dict[str, EpisodicRecord] = {}
+        self._episodes = []
+        self._ep_by_id = {}
         if self.extractor is not None and hasattr(self.extractor, "reset"):
             self.extractor.reset()  # clear any coreference context tied to the old store
         self.structured = StructuredTier()
         self.vector = VectorTier(self.embedder)
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._resolver = EntityResolver()  # owns the entity vocabulary (`_entities` reads through)
-        self._session_ts: dict[int, float] = {}
+        self._session_ts = {}
         # Operational counters (observability, not core state — kept out of the snapshot).
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
         # Cost accounting for the write + query hot path (the comparable Track-D axes:
