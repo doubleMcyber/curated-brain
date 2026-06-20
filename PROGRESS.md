@@ -166,10 +166,12 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           tok/s** (50 tok in 25 min, ~150× too slow for one scenario); the only fast model (1.7B) is
           too weak. Large file transfers are all blocked/truncated (Ollama registry, HF-LFS GGUF,
           GitHub-raw convert script), so no capable-model download / llama.cpp workaround either.
-          Remaining local lever (documented, not pursued): `outlines` (installed) could force the
-          fast 1.7B to emit valid JSON via grammar-constrained decoding → a *valid same-model* 1.7B
-          comparison (what Track-D's "same local model" literally asks), but still a **weak**-Mem0,
-          not the **capable**-Mem0 the DONE bar wants — so it doesn't change the headline; the capable
+          Forced-JSON lever (ATTEMPTED, also dependency-blocked): tried `outlines` grammar-constrained
+          decoding to make the fast 1.7B emit valid JSON → a *valid same-model* 1.7B comparison (what
+          Track-D's "same local model" literally asks) — but it hit the same tarpit (outlines →
+          transformers TF path → Keras-3 conflict, needs `tf-keras`); every fix reveals the next.
+          Even success would be a **weak**-Mem0, not the **capable**-Mem0 the DONE bar wants; abandoned
+          to protect the green CB gate from further env churn. The capable
           path is endpoint-bound — and the env has **no usable hosted key either** (only a
           `GEMINI_CLI_IDE_AUTH_TOKEN`, not a generative-API key; no ANTHROPIC/OPENAI/GEMINI key), so
           neither local nor hosted capable inference is reachable from here. The int8 chase also
