@@ -61,6 +61,64 @@ class BruteForceIndex:
         return idx
 
 
+class HnswIndex:
+    """Approximate cosine ANN over unit vectors via ``hnswlib`` — an optional PRODUCTION
+    backend for scale (sublinear top-k query vs brute force's O(n)). Conforms to
+    ``VectorIndex`` so it drops into :class:`VectorTier`.
+
+    Scope: it is *approximate* and *not* byte-deterministic, so the deterministic
+    :class:`BruteForceIndex` remains the DEFAULT (AC-1 snapshot determinism). Use this only
+    where corpus size makes brute force too slow; ``topk`` is the fast path, while ``rank``
+    returns the full ranking for protocol compatibility. Filter-pushdown for selective
+    metadata filters (over-fetch correctness) is a documented follow-up.
+    """
+
+    def __init__(self, dim: int, *, max_elements: int = 1024, ef_construction: int = 200,
+                 m: int = 16, ef: int = 200, seed: int = 100) -> None:
+        try:
+            import hnswlib
+        except ImportError as e:  # pragma: no cover - exercised only without the extra
+            raise RuntimeError(
+                "HnswIndex requires hnswlib: pip install 'curated-brain[scale]'") from e
+        self.dim = dim
+        self._cap = max_elements
+        self._idx = hnswlib.Index(space="ip", dim=dim)  # unit vectors -> inner product == cosine
+        self._idx.init_index(max_elements=max_elements, ef_construction=ef_construction,
+                             M=m, random_seed=seed)
+        self._idx.set_ef(ef)
+        self._idx.set_num_threads(1)
+        self._live: set[int] = set()
+        self._added = 0
+
+    def add(self, key: int, vector: np.ndarray) -> None:
+        if self._added >= self._cap:
+            self._cap = max(self._cap * 2, key + 1)
+            self._idx.resize_index(self._cap)
+        self._idx.add_items(np.asarray(vector, dtype=np.float32).reshape(1, -1),
+                            np.asarray([key]))
+        self._live.add(key)
+        self._added += 1
+
+    def remove(self, key: int) -> None:
+        if key in self._live:
+            self._idx.mark_deleted(key)
+            self._live.discard(key)
+
+    def topk(self, vector: np.ndarray, k: int) -> list[tuple[int, float]]:
+        """Fast approximate top-k (the ANN benefit). Skips deleted keys; ``ip`` distance is
+        ``1 - cosine`` for unit vectors, so the score is ``1 - distance``."""
+        if not self._live:
+            return []
+        q = np.asarray(vector, dtype=np.float32).reshape(1, -1)
+        labels, dists = self._idx.knn_query(q, k=min(k, self._added))
+        return [(int(lbl), 1.0 - float(d)) for lbl, d in zip(labels[0], dists[0], strict=True)
+                if int(lbl) in self._live]
+
+    def rank(self, vector: np.ndarray) -> list[tuple[int, float]]:
+        """Full ranking (protocol compatibility, so the tier's filter-then-take-k works)."""
+        return self.topk(vector, len(self._live))
+
+
 @dataclass
 class VectorRecord:
     rid: str

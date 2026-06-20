@@ -10,6 +10,8 @@ dev = ["pytest>=7", "ruff>=0.4"]
 # Real local-model providers (curated_brain/providers.py). Absent by default so the
 # offline gate runs on the deterministic fakes; install to un-fake the pipeline.
 local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
+# Real ANN backend (curated_brain/vector.py: HnswIndex) for scale; brute force stays default.
+scale = ["hnswlib>=0.7"]
 
 [build-system]
 requires = ["setuptools>=68"]
