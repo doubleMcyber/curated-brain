@@ -33,3 +33,35 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+  integrations:
+    name: adoption extras (mcp + langchain + scale)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the adoption surfaces' extras so their tests RUN instead of skipping. The
+      # [local] model stack is intentionally excluded (heavy; its tests stay behind CB_LIVE).
+      - name: Install (dev + mcp + langchain + scale)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,mcp,langchain,scale]"
+
+      # Guard: with the extras present, the MCP / LangChain / ANN suites must EXECUTE, not skip
+      # — otherwise a regression in those shipped features would pass CI unnoticed.
+      - name: Integration tests must run (zero skips)
+        run: |
+          set -o pipefail
+          pytest tests/test_mcp.py tests/test_langchain.py tests/test_ann.py -q -rs | tee /tmp/integ.txt
+          if grep -q "skipped" /tmp/integ.txt; then
+            echo "::error::an adoption extra is missing — MCP/LangChain/ANN tests skipped in CI"
+            exit 1
+          fi
+
+      - name: Full suite (with adoption extras)
+        run: pytest -q
