@@ -30,6 +30,9 @@ the project is pre-1.0, so the API may still change.
   and **cost accounting** (embed/extract calls + tokens, `avg_context_tokens`).
 - Durable persistence (`CuratedBrain.save` / `load`).
 - Robustness / property test suite; runnable `examples/`; Apache-2.0 LICENSE, README, CI.
+- **Soak/scale test** — 5000 redundant observations → ~174 episodic records + all 500 distinct
+  facts (the store grows with distinct facts, not observations), with full recall after
+  consolidation and a byte-identical snapshot round-trip at scale.
 - Complete top-level public API in `curated_brain/__init__` (imports stay lazy).
 - **Benchmarks** on an independent offline harness (see README): CB wins precision +
   contradiction-resolution vs strong RAG references and (preliminary, small local model) vs
