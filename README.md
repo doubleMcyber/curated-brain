@@ -112,6 +112,16 @@ CB_LIVE=1 pytest -q -k live   # opt in to the real-model tests (needs the [local
 Real-model behaviour that CI must reproduce is captured with the record/replay
 [`cassette`](curated_brain/cassette.py) layer, so the gate stays deterministic without weights.
 
+## Mount it on an agent (MCP)
+
+Expose the memory layer to any MCP host (Claude, agents) — `write` / `query` / `answer` /
+`consolidate` / `stats` tools, raw text in:
+
+```bash
+pip install -e ".[mcp]"
+curated-brain-mcp            # stdio server; set CB_MCP_PATH=store.json to persist across runs
+```
+
 ## How it works
 
 | Layer | Module |
