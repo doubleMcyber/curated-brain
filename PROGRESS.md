@@ -185,7 +185,11 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         a plain testable `MemoryService` (defaults to the heuristic extractor → raw text in; optional
         on-disk persistence). FastMCP imported lazily (`[mcp]` extra; not in the default gate); console
         script `curated-brain-mcp`. +4 tests. Gate 98 passed/4 skipped.
-      - [ ] Remaining: LangChain/LlamaIndex memory adapter, typed config object.
+      - [x] **LangChain Retriever (`curated_brain/langchain.py`) — landed 2026-06-19, reviewer PASS (P6).**
+        `build_retriever()` wraps a CuratedBrain as a LangChain `BaseRetriever` (standard `.invoke()`
+        API; `.cb` writable); plain `memories()` core is langchain-free + tested. langchain-core lazy
+        (`[langchain]` extra; not in default gate). +3 tests. Gate 105 passed/4 skipped.
+      - [ ] Remaining: LlamaIndex memory adapter, typed config object.
       *Bar:* quickstart runs from a clean env in <10 min.
 - [~] **F. Release engineering.** *(core surface landed — reviewer PASS 2026-06-18)*
       - [x] **LICENSE** (Apache-2.0, matches Mem0/Letta/Zep), **README** (honest — explicitly does
