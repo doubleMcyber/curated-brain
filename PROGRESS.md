@@ -511,5 +511,14 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   indexed by `(subject,predicate)` (`_by_key`, same Fact objects as the list so in-place supersede stays
   consistent; rebuilt on `load`; `to_dict` unchanged → snapshots byte-identical). Reads are O(1)-per-key
   (10k-fact resolve in ~0.017s vs old O(n) scan); AC-9 byte-identical; index==scan verified (incl. 12
-  supersedes, mixed-case, restore). Soak/scale test landed (Track H). **Still open: P1 entity resolution
-  (biggest lever, false-merge risk); P3 ANN-into-tier over-fetch (interacts with P0 hybrid).**
+  supersedes, mixed-case, restore). Soak/scale test landed (Track H).
+  **[x] P1 DONE (2026-06-20, ULTRACODE workflows — design panel + 4-lens adversarial verify).**
+  `curated_brain/resolve.py EntityResolver`: conservative subject canonicalization ("Erin"/"Erin Smith"/
+  "Ms. Smith" -> one entity) via honorific-strip + exact component subsumption, gated on store-provable
+  uniqueness, NO fuzzy matching. Hooks: write canonicalizes subject (copy-first, case-preserved when no
+  merge), query canonicalizes plan.entity + backstop, answer_structured/path, restore rebuilds the resolver.
+  AC-9 byte-identical (no-op on single-token harness names). **The verify workflow caught TWO real
+  false-merge bugs** (same-index-only poison missed cross-index; then poisoned-one-index still promoted via
+  the other) — both fixed; a 4392-permutation brute-force final check found 0 false merges. +13 tests.
+  Gate 123 passed/4 skipped. **Still open: P3 ANN-into-tier over-fetch (interacts with P0 hybrid);
+  object-side relation canonicalization (deferred behind the same gate).**
