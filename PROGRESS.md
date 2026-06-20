@@ -171,8 +171,16 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         timestamp used to create an "open" fact invisible to as-of (**silent bi-temporal corruption**)
         → now rejected; malformed `metadata.fact` / non-str observation/question → clear typed errors
         instead of opaque KeyError/AttributeError. Boundary validation in `CuratedBrain.write/query`.
-      - [ ] Remaining: long-horizon soak; security review of blob-restore / key handling; determinism
-        story under real (nondeterministic) models.
+      - [x] **Soak/scale test (`tests/test_soak.py`) — landed 2026-06-19, reviewer PASS.** 5000
+        redundant observations → store_size **174** episodic + **500** structured (all distinct facts),
+        discard_rate 0.66, full recall after consolidation, byte-identical snapshot at scale — the
+        curation thesis validated at volume (deterministic; reviewer forced gate→STORE and confirmed
+        the bound catches the regression). Scope honest: spoon-fed facts → exercises gate+structured
+        curation, not extraction.
+      - [ ] Remaining: security review of blob-restore / key handling; determinism story under real
+        (nondeterministic) models. **Latent minor (reviewer-noted, pre-existing, out of scope):** a
+        caller-passed `gate=` SUBCLASS is dropped on `reset()` (ctor stores `gate.to_dict()`, reset
+        rebuilds a vanilla `SurpriseGate`) — only affects custom-gate-subclass injection.
       *Bar:* fuzz suite green; soak holds.
 
 ### Track 3 — SHIP (adoption surface + narrative)
