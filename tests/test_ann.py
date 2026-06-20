@@ -70,3 +70,49 @@ def test_hnsw_topk_and_deletion():
     assert idx.topk(vecs[0], 1)[0][0] == 0  # a vector is its own nearest neighbor
     idx.remove(0)
     assert all(key != 0 for key, _ in idx.topk(vecs[0], 5))  # deleted key never returned
+
+
+class _PreEmbedded:
+    """Embedder stub for the tier test: records are added with explicit ``embedding=`` so the
+    tier never calls ``embed`` for storage. ``dim`` is all the tier needs at construction."""
+
+    def __init__(self, dim: int) -> None:
+        self.dim = dim
+
+
+def test_vector_tier_ann_backend_matches_brute_force_at_scale():
+    # The optional HnswIndex backend drops into VectorTier: its `search` over-fetches via the
+    # index `topk` fast path and agrees with the exact brute-force tier at high recall, while
+    # being faster at scale. Query by vector to isolate the semantic path (no lexical hybrid).
+    from curated_brain.vector import HnswIndex, VectorTier
+
+    n, dim, q = 5000, 64, 40
+    vecs = _unit_vectors(n, dim, seed=1)
+    queries = _unit_vectors(q, dim, seed=2)
+    emb = _PreEmbedded(dim)
+    bf = VectorTier(emb)
+    ann = VectorTier(emb, index=HnswIndex(dim, max_elements=n))
+    assert type(bf.index).__name__ == "BruteForceIndex"  # default is the exact, deterministic index
+    for i in range(n):
+        bf.add(rid=f"r{i}", text=f"r{i}", wall_ts=0.0, session_id="s", embedding=vecs[i])
+        ann.add(rid=f"r{i}", text=f"r{i}", wall_ts=0.0, session_id="s", embedding=vecs[i])
+
+    hits = total = 0
+    t_bf = t_ann = 0.0
+    for qi in range(q):
+        t0 = time.perf_counter()
+        exact = {r.rid for r, _ in bf.search(queries[qi], k=10)}
+        t_bf += time.perf_counter() - t0
+        t0 = time.perf_counter()
+        approx = {r.rid for r, _ in ann.search(queries[qi], k=10)}
+        t_ann += time.perf_counter() - t0
+        hits += len(exact & approx)
+        total += len(exact)
+    assert hits / total >= 0.85, f"ANN-tier recall@10 {hits / total:.3f} < 0.85"
+    assert t_ann < t_bf, f"ann {t_ann:.3f}s not faster than brute {t_bf:.3f}s"
+    # the metadata filters still apply on top of the ANN fast path
+    assert ann.search(queries[0], k=10, tier="semantic") == []  # all records are episodic
+    # snapshotting an opt-in HnswIndex tier fails LOUDLY (not a raw AttributeError) — byte
+    # determinism (AC-1) is a BruteForce-only feature, and the error says so.
+    with pytest.raises(TypeError, match="not serializable"):
+        ann.to_dict()

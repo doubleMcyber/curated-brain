@@ -24,7 +24,9 @@ the project is pre-1.0, so the API may still change.
   (incl. multi-word), and `query()` surfaces facts for every named entity when a plan
   open-domains or mis-routes; multi-hop now cites the whole support chain.
 - **Real ANN backend** (`HnswIndex`, `[scale]` extra) behind `VectorIndex` — ~20× faster top-k
-  at scale; brute force stays the deterministic default.
+  at scale; brute force stays the deterministic default. Now drops into `VectorTier` via
+  `VectorTier(embedder, index=HnswIndex(...))`: `search`/`nearest` use the index's `topk`
+  fast path (over-fetch + filter + hybrid re-rank), keeping the exact default byte-identical.
 - **MCP server** (`curated_brain.mcp_server`, `[mcp]` extra) + `curated-brain-mcp` console
   script — mount the memory layer on any agent host.
 - **LangChain Retriever** (`curated_brain.langchain.build_retriever`, `[langchain]` extra) —
