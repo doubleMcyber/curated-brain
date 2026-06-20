@@ -161,9 +161,12 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           **end-to-end run** — which proved the deeper blocker: Mem0 scored **0.0 across 3 scenarios**
           despite successful calls (722 s / **3125 s** / timeouts) because Qwen3-1.7B emits markdown
           prose, not the JSON Mem0's extractor needs → stores no usable memory. A weak-model strawman
-          (~52 min/scenario), **not** a fair Mem0. And large file transfers are all blocked/truncated
-          (Ollama registry, HF-LFS GGUF, GitHub-raw convert script), so no capable-model/llama.cpp
-          workaround. Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
+          (~52 min/scenario), **not** a fair Mem0. The clean tradeoff with no middle: the capable model
+          (**Ministral-8B + eager runs and emits PERFECT JSON** — exactly what Mem0 needs) is **0.03
+          tok/s** (50 tok in 25 min, ~150× too slow for one scenario); the only fast model (1.7B) is
+          too weak. Large file transfers are all blocked/truncated (Ollama registry, HF-LFS GGUF,
+          GitHub-raw convert script), so no capable-model download / llama.cpp workaround either.
+          Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
           vs temporal_rag 0.67/**0.53** ran fine — matches the full references result; only the
           named-rival LLM path is blocked.) **Conclusion proven end-to-end, not projected.**
         So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound, not impossible**: the adapters
