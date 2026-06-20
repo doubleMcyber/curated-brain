@@ -223,6 +223,11 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         extractor + coreference, schema/multi-entity retrieval, HnswIndex ANN, MCP server, cost
         metrics, and the honest benchmark scope. SHIP/F surface verified present: LICENSE (Apache-2.0),
         README (+ benchmark section), CI, CHANGELOG, CONTRIBUTING; `console_scripts` entry point added.
+      - [x] **CI now tests the adoption extras (2026-06-20).** A planning audit caught that the `[dev]`-only
+        gate **silently skipped** `test_mcp`/`test_langchain`/`test_ann` — three README-advertised features
+        ran untested in CI (a regression in `mcp_server.py`/`langchain.py`/HnswIndex would have passed). Added
+        an `integrations` job installing `[dev,mcp,langchain,scale]` that runs those suites and FAILS on any
+        skip, plus the full suite. The `[dev]`-only determinism gate is unchanged (AC-1 stays model-free).
       - [ ] Remaining: **PyPI publish** (needs the maintainer's account/token — can't be done by the
         agent); docs site; coverage. **mypy gate deferred** — 53 errors today (dynamic `reset()` attr
         pattern + lazy-None provider models); needs a real typing pass, not a quick win.
