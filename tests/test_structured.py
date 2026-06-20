@@ -76,3 +76,37 @@ def test_entity_matching_is_normalized():
     t.assert_fact(fact_id="x", subject="Alice", predicate="city", object="Berlin",
                   valid_from=1.0, created_at=1.0)
     assert t.current("  alice ", "CITY").object == "Berlin"
+
+
+def test_key_index_stays_consistent_after_supersede_and_restore():
+    # The (subject, predicate) index speeds up reads; it must give the SAME answers as a
+    # scan and stay consistent through in-place supersede and a snapshot/restore rebuild.
+    t = StructuredTier()
+    t.assert_fact(fact_id="1", subject="Alice", predicate="city", object="Berlin",
+                  valid_from=0.0, created_at=0.0)
+    t.assert_fact(fact_id="2", subject="Alice", predicate="city", object="Munich",
+                  valid_from=10.0, created_at=10.0)  # supersedes Berlin
+    assert t.current("Alice", "city").object == "Munich"
+    assert t.as_of("Alice", "city", 5.0).object == "Berlin"   # before the move
+    assert [f.object for f in t.history("Alice", "city")] == ["Berlin", "Munich"]
+    assert t.predicates_for("Alice") == ["city"]
+    # restore rebuilds the index from the canonical facts list
+    t2 = StructuredTier()
+    t2.load(t.to_dict())
+    assert t2.current("Alice", "city").object == "Munich"
+    assert t2.as_of("Alice", "city", 5.0).object == "Berlin"
+    assert t2.predicates_for("Alice") == ["city"]
+
+
+def test_structured_resolve_scales_to_10k_facts():
+    import time
+    t = StructuredTier()
+    n = 10_000
+    t0 = time.perf_counter()
+    for i in range(n):
+        t.assert_fact(fact_id=f"f{i}", subject=f"P{i}", predicate="city", object=f"C{i}",
+                      valid_from=0.0, created_at=0.0)
+    # every fact resolves correctly; O(1)-per-key lookups, so this finishes fast (not O(n) scan)
+    for i in range(0, n, 50):
+        assert t.resolve(f"P{i}", "city").object == f"C{i}"
+    assert time.perf_counter() - t0 < 3.0  # catches an O(n^2) regression

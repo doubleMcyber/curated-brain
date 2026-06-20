@@ -21,6 +21,13 @@ from curated_brain.util import normalize
 class StructuredTier:
     def __init__(self) -> None:
         self.facts: list[Fact] = []
+        # (norm subject, norm predicate) -> facts, holding the SAME Fact objects as `facts`
+        # (so in-place supersede stays consistent). Derived, not serialized — `to_dict` emits
+        # only `facts`, so snapshots stay byte-identical (AC-1). Turns per-key reads O(1).
+        self._by_key: dict[tuple[str, str], list[Fact]] = {}
+
+    def _index(self, f: Fact) -> None:
+        self._by_key.setdefault((normalize(f.subject), normalize(f.predicate)), []).append(f)
 
     # ------------------------------------------------------------------ write path ---
     def assert_fact(self, *, fact_id: str, subject: str, predicate: str, object: str,
@@ -34,8 +41,8 @@ class StructuredTier:
         """
         key = (normalize(subject), normalize(predicate))
         superseded: Fact | None = None
-        for f in self.facts:
-            if f.is_open and (normalize(f.subject), normalize(f.predicate)) == key:
+        for f in self._by_key.get(key, []):  # only facts for this key (was: scan all facts)
+            if f.is_open:
                 if normalize(f.object) == normalize(object):
                     return f, None  # same value reasserted — no new row
                 # Conflict: close the old interval (valid + transaction time) and link.
@@ -50,6 +57,7 @@ class StructuredTier:
             confidence=confidence, provenance=provenance or {},
         )
         self.facts.append(new)
+        self._index(new)
         return new, superseded
 
     # ------------------------------------------------------------------ read path ----
@@ -61,10 +69,7 @@ class StructuredTier:
         if a restored/corrupt store ever violates that invariant.
         """
         key = (normalize(subject), normalize(predicate))
-        open_matches = [
-            f for f in self.facts
-            if f.is_open and (normalize(f.subject), normalize(f.predicate)) == key
-        ]
+        open_matches = [f for f in self._by_key.get(key, []) if f.is_open]
         if not open_matches:
             return None
         return max(open_matches, key=lambda f: (f.valid_from, f.created_at))
@@ -77,10 +82,8 @@ class StructuredTier:
         """
         key = (normalize(subject), normalize(predicate))
         cands = [
-            f for f in self.facts
-            if (normalize(f.subject), normalize(f.predicate)) == key
-            and f.valid_from <= t < f.valid_to
-            and f.created_at <= t < f.expired_at
+            f for f in self._by_key.get(key, [])
+            if f.valid_from <= t < f.valid_to and f.created_at <= t < f.expired_at
         ]
         if not cands:
             return None
@@ -117,9 +120,7 @@ class StructuredTier:
     def history(self, subject: str, predicate: str) -> list[Fact]:
         """All facts (open + superseded) for (subject, predicate), oldest first."""
         key = (normalize(subject), normalize(predicate))
-        out = [f for f in self.facts
-               if (normalize(f.subject), normalize(f.predicate)) == key]
-        return sorted(out, key=lambda f: (f.valid_from, f.created_at))
+        return sorted(self._by_key.get(key, []), key=lambda f: (f.valid_from, f.created_at))
 
     @property
     def open_facts(self) -> list[Fact]:
@@ -128,9 +129,9 @@ class StructuredTier:
     def predicates_for(self, subject: str) -> list[str]:
         """Distinct predicates with a currently-open fact for ``subject`` (sorted, so the
         order is deterministic regardless of insertion order)."""
-        key = normalize(subject)
-        preds = {f.predicate for f in self.facts
-                 if f.is_open and normalize(f.subject) == key}
+        skey = normalize(subject)
+        preds = {f.predicate for (subj, _pred), facts in self._by_key.items() if subj == skey
+                 for f in facts if f.is_open}
         return sorted(preds)
 
     # ------------------------------------------------------------------ persistence --
@@ -139,3 +140,6 @@ class StructuredTier:
 
     def load(self, rows: list[dict]) -> None:
         self.facts = [Fact(**d) for d in rows]
+        self._by_key = {}
+        for f in self.facts:
+            self._index(f)
