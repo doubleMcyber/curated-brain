@@ -2,8 +2,27 @@
 name = "curated-brain"
 version = "0.1.0"
 description = "A persistent, self-organizing memory layer for LLM agents (frozen-model APIs only)."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "doubleMcyber", email = "fulgursol@gmail.com" }]
+keywords = ["llm", "memory", "agents", "rag", "bi-temporal", "vector-search", "retrieval"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = ["numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/doubleMcyber/curated-brain"
+Source = "https://github.com/doubleMcyber/curated-brain"
+Issues = "https://github.com/doubleMcyber/curated-brain/issues"
+Changelog = "https://github.com/doubleMcyber/curated-brain/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
