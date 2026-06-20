@@ -229,8 +229,12 @@ class CuratedBrain(MemoryBackend):
         if not math.isfinite(timestamp):
             raise ValueError(f"timestamp must be finite, got {timestamp!r}")
         pred_vocab = frozenset(normalize(f.predicate) for f in self.structured.facts)
-        plan = self.planner.plan(question, entities=self._entities,
-                                 predicates=pred_vocab, session_ts=self._session_ts)
+        # Predicates whose object is itself a known entity are RELATIONS (traversable in a
+        # multi-hop chain) — auto-detected, not hardcoded to "manager".
+        relation_preds = frozenset(normalize(f.predicate) for f in self.structured.facts
+                                   if normalize(f.object) in self._entities)
+        plan = self.planner.plan(question, entities=self._entities, predicates=pred_vocab,
+                                 relation_preds=relation_preds, session_ts=self._session_ts)
         lines: list[str] = []
         citations: list[Citation] = []
 
