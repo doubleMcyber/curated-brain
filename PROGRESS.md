@@ -166,12 +166,17 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           tok/s** (50 tok in 25 min, ~150× too slow for one scenario); the only fast model (1.7B) is
           too weak. Large file transfers are all blocked/truncated (Ollama registry, HF-LFS GGUF,
           GitHub-raw convert script), so no capable-model download / llama.cpp workaround either.
-          Forced-JSON lever (ATTEMPTED, also dependency-blocked): tried `outlines` grammar-constrained
-          decoding to make the fast 1.7B emit valid JSON → a *valid same-model* 1.7B comparison (what
-          Track-D's "same local model" literally asks) — but it hit the same tarpit (outlines →
-          transformers TF path → Keras-3 conflict, needs `tf-keras`); every fix reveals the next.
-          Even success would be a **weak**-Mem0, not the **capable**-Mem0 the DONE bar wants; abandoned
-          to protect the green CB gate from further env churn. The capable
+          Forced-JSON lever (WORKED — Mem0 made functional, but throughput-capped): `outlines`
+          grammar-constrained decoding (after a `tf-keras` shim) forces the fast 1.7B to emit mem0's
+          exact JSON schemas (`MEM0_OUTLINES=1`, harness). On `contra-2` (same 1.7B for both): **mem0
+          answer_accuracy 1.00 — no longer the 0.0 strawman**; CB 1.00 too → an answer-accuracy TIE.
+          Honest limits: (a) mem0 recall/precision 0.00 is an **adapter provenance artifact** (mem0
+          answered correctly → has the info; gold-turn provenance just isn't surfaced for its
+          consolidated memories) — so NOT claimed as a CB win; (b) outlines FSM decoding is **~28 min
+          for one 2-turn scenario** → a multi-scenario × multi-rival run is infeasible (and Zep/Letta,
+          with more LLM calls, flatly so). Real breakthrough (functional same-model Mem0), but the
+          throughput ceiling means clause 1's *meaningful, all-three-rivals, reproducible* bar still
+          needs a hosted endpoint. The capable
           path is endpoint-bound — and the env has **no usable hosted key either** (only a
           `GEMINI_CLI_IDE_AUTH_TOKEN`, not a generative-API key; no ANTHROPIC/OPENAI/GEMINI key), so
           neither local nor hosted capable inference is reachable from here. The int8 chase also
