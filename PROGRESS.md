@@ -156,13 +156,16 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         - **MPS GPU works (was wrongly "broken"):** but every local-inference avenue is now
           conclusively non-viable on this box (measured): CPU ~5–11 h; MPS SDPA crashes on the GQA
           matmul (Ministral-8B + Qwen3); bf16-on-MPS <2 tok/s; fp16+SDPA hangs on load; **fp16+eager
-          is the only runnable config (~4.5 tok/s, sane single calls) but SIGSEGVs under a real run's
-          sustained load** → Mem0 came back as a Connection-refused 0.0 strawman (invalid). And large
-          file transfers are all blocked/truncated (Ollama registry, HF-LFS GGUF, GitHub-raw convert
-          script), so no GGUF/llama.cpp workaround either. Built `tools/mps_openai_server.py` +
-          `bench_endpoint_subset.py` — **endpoint-ready, validated single-call, but no sustained local
-          model exists here**. (CB vs temporal_rag on the subset ran fine — CB precision 1.0 vs 0.53 —
-          consistent with the full references result; only the named-rival LLM path is blocked.)
+          is the only runnable config (~4.5 tok/s). Initial SIGSEGV-under-load was **fixed** by a
+          generation lock (concurrent MPS `generate()` isn't thread-safe), enabling a full stable
+          **end-to-end run** — which proved the deeper blocker: Mem0 scored **0.0 across 3 scenarios**
+          despite successful calls (722 s / **3125 s** / timeouts) because Qwen3-1.7B emits markdown
+          prose, not the JSON Mem0's extractor needs → stores no usable memory. A weak-model strawman
+          (~52 min/scenario), **not** a fair Mem0. And large file transfers are all blocked/truncated
+          (Ollama registry, HF-LFS GGUF, GitHub-raw convert script), so no capable-model/llama.cpp
+          workaround. Built `tools/mps_openai_server.py` + `bench_endpoint_subset.py`. (CB 0.67/**1.00**
+          vs temporal_rag 0.67/**0.53** ran fine — matches the full references result; only the
+          named-rival LLM path is blocked.) **Conclusion proven end-to-end, not projected.**
         So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound, not impossible**: the adapters
         (Mem0 via `MEM0_OPENAI_BASE`, Zep via `ZEP_OPENAI_BASE`) + CB (`OpenAICompatLLM`) all target one
         OpenAI-compatible endpoint. Point any **hosted** endpoint at them and the run is a one-liner per
