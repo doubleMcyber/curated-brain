@@ -19,6 +19,10 @@ from curated_brain.util import jaccard, normalize
 # at the search ranking, so neither modality's blind spot dominates. General + deterministic.
 _W_SEM = 0.5
 _W_LEX = 0.5
+# Over-fetch factor for the optional ANN backend: pull k*_OVERFETCH approximate candidates so
+# the metadata filters + hybrid re-rank have headroom (very selective filters could still
+# under-recall — filter-pushdown is the documented follow-up). No effect on the exact default.
+_OVERFETCH = 8
 
 
 @runtime_checkable
@@ -141,9 +145,12 @@ class VectorRecord:
 class VectorTier:
     """Embedded records + metadata-filtered ANN search (PRD §7 step 2)."""
 
-    def __init__(self, embedder) -> None:
+    def __init__(self, embedder, *, index=None) -> None:
         self.embedder = embedder
-        self.index = BruteForceIndex(embedder.dim)
+        # Default is the exact, byte-deterministic BruteForceIndex (AC-1). Pass a real ANN
+        # backend (HnswIndex) for scale — it exposes ``topk``, which `search`/`nearest` use as
+        # a sublinear fast path; snapshot/re-embed remain BruteForce features.
+        self.index = index if index is not None else BruteForceIndex(embedder.dim)
         self.meta: dict[int, VectorRecord] = {}
         self._next = 0
 
@@ -178,7 +185,12 @@ class VectorTier:
         qtext = query if isinstance(query, str) else None
         qv = self.embedder.embed(query) if qtext is not None else np.asarray(query)
         ent = normalize(entity) if entity is not None else None
-        ranked = self.index.rank(qv)  # [(key, embedding-similarity)]
+        # A real ANN backend (HnswIndex) exposes `topk` — over-fetch k*_OVERFETCH candidates
+        # (the sublinear fast path); the exact BruteForce default ranks ALL records.
+        if hasattr(self.index, "topk"):
+            ranked = self.index.topk(qv, k * _OVERFETCH)
+        else:
+            ranked = self.index.rank(qv)  # [(key, embedding-similarity)]
         if qtext is not None:  # hybrid: re-rank by semantic + lexical BEFORE truncating to k
             ranked = sorted(
                 ((key, _W_SEM * cos + _W_LEX * jaccard(qtext, self.meta[key].text))
@@ -202,7 +214,8 @@ class VectorTier:
 
     def nearest(self, embedding: np.ndarray) -> tuple[VectorRecord, float] | None:
         """The single most-similar stored record (for surprise/novelty scoring), or None."""
-        ranked = self.index.rank(np.asarray(embedding, dtype=np.float64))
+        emb = np.asarray(embedding, dtype=np.float64)
+        ranked = self.index.topk(emb, 1) if hasattr(self.index, "topk") else self.index.rank(emb)
         if not ranked:
             return None
         key, score = ranked[0]
@@ -214,7 +227,9 @@ class VectorTier:
         are preserved (non-lossy — only the vectors change). Returns the count migrated.
 
         Deterministic: records are visited in insertion order, so a re-embed reproduces a
-        byte-identical index for the same inputs and model.
+        byte-identical index for the same inputs and model. Note: the rebuilt index is always
+        an exact BruteForceIndex, so re-embedding an opt-in HnswIndex tier demotes it to brute
+        force (re-wrap in an HnswIndex afterwards if scale still demands it).
         """
         self.embedder = new_embedder
         new_index = BruteForceIndex(new_embedder.dim)
@@ -228,6 +243,10 @@ class VectorTier:
 
     # ------------------------------------------------------------------ persistence --
     def to_dict(self) -> dict:
+        if not hasattr(self.index, "to_dict"):  # e.g. an opt-in HnswIndex
+            raise TypeError(
+                f"{type(self.index).__name__} is not serializable; byte-deterministic "
+                "snapshots require the default BruteForceIndex (AC-1).")
         return {
             "next": self._next,
             "index": self.index.to_dict(),

@@ -148,8 +148,17 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         so AC-1 byte-determinism is untouched (gate 94 passed). Honest scope: swapping it into the tier
         as-is gives no speedup (tier `search` calls full `rank`); the real win needs `topk`-with-
         over-fetch wired into `VectorTier.search` (the documented follow-up).
-      - [ ] Remaining: wire `topk`-over-fetch + filter-pushdown into `VectorTier.search`; durable
-        on-disk ANN; concurrency/async; namespacing; the ≥1e5 load test.
+      - [x] **P3 — `topk`-over-fetch wired into `VectorTier` — landed 2026-06-20, reviewer PASS.**
+        `VectorTier(embedder, index=HnswIndex(...))` now uses the index's `topk` fast path
+        (over-fetch `k*8`, then filter + hybrid re-rank) in `search`/`nearest`; `BruteForceIndex`
+        (no `topk`) stays the default so AC-1/AC-9 are byte-identical (C1–C6 unchanged). Tier-level
+        test: recall@10 ≥ 0.85 vs exact tier + faster at n=5000. Reviewer fixes applied: `to_dict`
+        on an Hnsw-backed tier now raises a clear `TypeError` (not a raw `AttributeError`), and
+        `reembed`'s BruteForce-demotion is documented. **Honest open gap:** very selective metadata
+        filters can under-recall on the ANN path (filter happens after top-k truncation) — the
+        documented `filter-pushdown` follow-up; the exact default is unaffected.
+      - [ ] Remaining: filter-pushdown for selective filters on the ANN path; durable on-disk ANN;
+        concurrency/async; namespacing; the ≥1e5 load test.
       *Bar:* load test ≥1e5 records meeting a stated recall@k + p95-latency bar.
 - [~] **G. Observability, ops & cost.** *(metrics landed — reviewer PASS 2026-06-18)*
       - [x] `CuratedBrain.metrics()`: write-decision breakdown (stored/reinforced/discarded),
