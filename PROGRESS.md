@@ -142,8 +142,14 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         losing 34/64 sessions + shifting 14 → C6 answers silently diverged after restore. Now
         persisted in the snapshot (legacy fallback retained). Reviewer confirmed no other field
         has the same latent issue (`_entities` is safe — facts route to structured regardless of gate).
-      - [ ] Remaining: real ANN (hnswlib/faiss) behind `VectorIndex` with over-fetch for filters
-        (changes `search()` — do carefully); concurrency/async; namespacing; the ≥1e5 load test.
+      - [x] **Real ANN backend (`HnswIndex`, hnswlib) — landed 2026-06-19, reviewer PASS.** Conforms
+        to `VectorIndex`; `topk` is ~20× faster than brute force at n=5000 with recall@10 ≈ 0.998;
+        deletion + resize correct. OPT-IN only (`[scale]` extra) — `BruteForceIndex` stays the default
+        so AC-1 byte-determinism is untouched (gate 94 passed). Honest scope: swapping it into the tier
+        as-is gives no speedup (tier `search` calls full `rank`); the real win needs `topk`-with-
+        over-fetch wired into `VectorTier.search` (the documented follow-up).
+      - [ ] Remaining: wire `topk`-over-fetch + filter-pushdown into `VectorTier.search`; durable
+        on-disk ANN; concurrency/async; namespacing; the ≥1e5 load test.
       *Bar:* load test ≥1e5 records meeting a stated recall@k + p95-latency bar.
 - [~] **G. Observability, ops & cost.** *(metrics landed — reviewer PASS 2026-06-18)*
       - [x] `CuratedBrain.metrics()`: write-decision breakdown (stored/reinforced/discarded),
