@@ -220,6 +220,22 @@ def test_multihop_query_cites_every_hop_fact():
     assert len(structured_cites) >= 2
 
 
+def test_relation_auto_detection_enables_arbitrary_multihop():
+    # A relation other than the hardwired "manager" (here "employer", whose object Acme is
+    # itself a known entity) must form a traversable hop chain — general multi-hop.
+    cb = CuratedBrain(seed=0)
+    cb.write("Alice's employer is Acme.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "employer", "object": "Acme"}})
+    cb.write("Acme's city is Berlin.", session_id="s1", timestamp=1.0,
+             metadata={"fact": {"subject": "Acme", "predicate": "city", "object": "Berlin"}})
+    plan = cb.planner.plan("What city is Alice's employer in?", entities=cb._entities,
+                           predicates=frozenset({"employer", "city"}),
+                           relation_preds=frozenset({"employer"}), session_ts=cb._session_ts)
+    assert plan.hops == ["employer", "city"]  # employer auto-detected as a relation
+    ctx = cb.query("What city is Alice's employer in?", session_id="q", timestamp=2.0).context
+    assert "Berlin" in ctx  # end-to-end: chain resolves Alice -> Acme -> Berlin
+
+
 def test_fuse_drops_superseded_values():
     hits = [
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),

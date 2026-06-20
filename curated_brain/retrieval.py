@@ -44,6 +44,7 @@ class QueryPlan:
 class Planner:
     def plan(self, question: str, *, entities: set[str],
              predicates: frozenset[str] = frozenset(),
+             relation_preds: frozenset[str] = frozenset(),
              session_ts: dict[int, float]) -> QueryPlan:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
@@ -58,8 +59,12 @@ class Planner:
             ptoks = set(tokenize(p, drop_stop=True))
             if ptoks and ptoks <= toks and p not in preds:
                 preds.append(p)
-        rel = [p for p in preds if p in _RELATION_PREDS]
-        attr = [p for p in preds if p not in _RELATION_PREDS]
+        # A predicate is relational if hardwired OR if it was STORED with an entity-valued
+        # object (``relation_preds``) — generalizing multi-hop beyond the "manager" relation to
+        # any "X's <relation>'s <attr>" chain, without hardcoding a vocabulary.
+        is_rel = _RELATION_PREDS | relation_preds
+        rel = [p for p in preds if p in is_rel]
+        attr = [p for p in preds if p not in is_rel]
         hops: list[str] | None = None
         predicate: str | None = None
         if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
