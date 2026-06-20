@@ -9,6 +9,9 @@ ships with deterministic local implementations so the whole layer is reproducibl
 scorable without any network access.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
 from curated_brain.backend import CuratedBrain, MemoryBackend
 from curated_brain.extraction import HeuristicExtractor, LLMExtractor
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
@@ -28,6 +31,11 @@ from curated_brain.providers import (
     SentenceTransformerEmbedder,
     TransformersLLM,
 )
+
+try:
+    __version__ = _pkg_version("curated-brain")
+except PackageNotFoundError:  # running from a source checkout without an install
+    __version__ = "0.1.0"
 
 __all__ = [
     # core
@@ -52,4 +60,6 @@ __all__ = [
     "Citation",
     "ConsolidationReport",
     "StoreStats",
+    # package metadata
+    "__version__",
 ]
