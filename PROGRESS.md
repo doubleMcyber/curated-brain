@@ -285,10 +285,16 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   embedder as CB + in-memory qdrant) and ran a 3-query subset head-to-head. **CB beats Mem0**:
   answer 1.00 vs 0.67, precision 1.00 vs 0.37, contradiction 1.00 vs 0.00; ties recall (1.00);
   ~0s vs **~70 min** ingest. **Fairness adversarially reviewed** (caught + fixed a `top_k` vs
-  `limit` defect before quoting precision/contradiction). **Caveats:** n=3 (anecdotal); Mem0 on a
-  SMALL local model via an OpenAI-shaped shim (NOT its cloud best); different extractors (CB
-  heuristic). A CREDIBLE FULL run still needs a capable shared endpoint (mem0 is ~2.7 min/add on
-  CPU → small suite ~5h, standard ~14h — CPU-throughput-bound, now measured). Harness branch
+  `limit` defect before quoting precision/contradiction).
+  **HONEST CORRECTION (broader partial run):** that n=3 was the smallest-scenario-per-category
+  subset = CB-FAVORABLE. A broader run (long-0/1, lexgap-0) — killed because the full suite is
+  infeasible offline (~2h/large scenario, ~15-20h) — shows: on PLAIN longitudinal recall all three
+  TIE on answer (1.00); CB still **dominates precision** (~1.00 vs Mem0 ~0.13) and contradiction;
+  **paraphrase (lexgap) fails for ALL three** (shared offline-embedder limit, not CB-specific). So
+  the honest claim is "CB beats Mem0 on precision + contradiction, ties on plain-recall answer," NOT
+  a sweep. **Caveats:** tiny n; Mem0 on a SMALL local model via an OpenAI-shaped shim with frequent
+  JSON-parse errors (NOT its cloud best); different extractors. A CREDIBLE FULL run needs a capable
+  shared endpoint + a real semantic embedder (mem0 is ~2.7 min/add on CPU → infeasible here). Harness branch
   `claude/curated-brain-adapter`: `mem_eval/adapters/mem0_local.py`, `bench_mem0_h2h.py`,
   `RESULTS_curated_brain.md`.
 - **Mem0 install + offline path (TESTED 2026-06-19).** `pip install mem0ai` SUCCEEDS
