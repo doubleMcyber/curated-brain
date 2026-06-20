@@ -192,6 +192,12 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         NOT claim benchmark wins), **CI** (`.github/workflows/ci.yml`: ruff + pytest on py3.11/3.12).
       - [x] `pip install -e .` verified (curated-brain 0.1.0); README quickstart runs as written.
       - [x] CHANGELOG.md + CONTRIBUTING.md.
+      - [x] **pip-install VERIFIED end-to-end (2026-06-19).** `python -m build` → wheel+sdist;
+        installed the wheel in a CLEAN venv (no source on path) → `import curated_brain` + write/answer
+        works, the `curated-brain-mcp` console script installs and its entry point resolves, and ONLY
+        `numpy` is pulled in (torch/hnswlib/mcp stay optional — the lazy-import discipline holds in a
+        real install). DONE clause 2 ("pip-installs") is satisfiable from a clean build; only the actual
+        PyPI upload (needs the maintainer's token) is outstanding.
       - [x] **CHANGELOG completed (2026-06-19)** — now reflects bge/OpenAI-compat providers, heuristic
         extractor + coreference, schema/multi-entity retrieval, HnswIndex ANN, MCP server, cost
         metrics, and the honest benchmark scope. SHIP/F surface verified present: LICENSE (Apache-2.0),
