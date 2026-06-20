@@ -37,6 +37,8 @@ the project is pre-1.0, so the API may still change.
 - Durable persistence (`CuratedBrain.save` / `load`).
 - **Complete PyPI package metadata** (`readme`, `license`, `authors`, `keywords`, `classifiers`,
   `project.urls`) — the README now renders as the project long-description; `twine check` passes.
+- **Typed public API** — the package is now `mypy`-clean and ships a `py.typed` marker, so
+  downstream type checkers see the annotations. `mypy` runs in the CI gate to keep it honest.
 - Robustness / property test suite; runnable `examples/`; Apache-2.0 LICENSE, README, CI.
 - **Soak/scale test** — 5000 redundant observations → ~174 episodic records + all 500 distinct
   facts (the store grows with distinct facts, not observations), with full recall after

@@ -232,9 +232,16 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
         `authors`, `keywords`, `classifiers`, and `[project.urls]` — previously the PKG-INFO had no
         long-description (PyPI page would render blank) and no license/author/URL metadata. README now
         embeds as the long-description; `python -m build` + `twine check dist/*` → PASSED.
+      - [x] **mypy-clean + `py.typed` (2026-06-20, reviewer PASS).** Did the real typing pass: 61
+        errors → 0. Root cause (the `reset()`/`restore()`-assigned core attrs) fixed with class-level
+        annotations (zero runtime effect); the remaining real holes closed with behavior-preserving
+        guards (`cent`/`predicate` non-None in the query path — `normalize()` would have crashed on
+        None anyway; `fact_key` short-circuit in consolidate) and honest scoped `# type: ignore`s.
+        `py.typed` ships in the wheel; `mypy` is now a CI gate step (scoped `ignore_missing_imports`
+        per heavy-dep module, so an internal typo is still flagged). AC-9 byte-identical; reviewer
+        verified every line behavior-equivalent and `py.typed` honest (no blanket ignores).
       - [ ] Remaining: **PyPI publish** (needs the maintainer's account/token — can't be done by the
-        agent); docs site; coverage. **mypy gate deferred** — 53 errors today (dynamic `reset()` attr
-        pattern + lazy-None provider models); needs a real typing pass, not a quick win.
+        agent); docs site; coverage.
       *Bar:* `pip install` works ✅; CI green (workflow added; gate is green locally).
 - [ ] **I. Positioning.** Write-up of the "memory is curation" thesis + benchmark table, comparison
       matrix vs rivals, demo, launch post. *Bar:* publishable report with reproducible numbers.

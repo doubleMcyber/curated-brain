@@ -18,7 +18,12 @@ Pure, order-deterministic helpers live here; the backend orchestrates the tier u
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+if TYPE_CHECKING:
+    from curated_brain.models import EpisodicRecord
 
 CLUSTER_THRESHOLD = 0.6  # cosine; same-fact paraphrases cluster, distinct facts do not
 
@@ -40,7 +45,7 @@ def cluster_by_similarity(pairs: list[tuple[np.ndarray, object]],
     return [c["members"] for c in clusters]
 
 
-def representative(members: list) -> object:
+def representative(members: list[EpisodicRecord]) -> EpisodicRecord:
     """Pick the cluster's representative: most-reinforced, then earliest id (deterministic).
     Its text becomes the extractive summary of the merged claim."""
     return min(members, key=lambda r: (-r.support_count, r.id))

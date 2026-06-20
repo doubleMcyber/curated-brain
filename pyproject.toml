@@ -25,7 +25,7 @@ Issues = "https://github.com/doubleMcyber/curated-brain/issues"
 Changelog = "https://github.com/doubleMcyber/curated-brain/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.8"]
 # Real local-model providers (curated_brain/providers.py). Absent by default so the
 # offline gate runs on the deterministic fakes; install to un-fake the pipeline.
 local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
@@ -46,9 +46,23 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["curated_brain*"]
 
+[tool.setuptools.package-data]
+curated_brain = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.mypy]
+files = ["curated_brain"]
+python_version = "3.11"
+
+# Only the optional heavy deps (unstubbed, not installed in the default gate) are treated as
+# Any — scoped per-module so a typo'd *internal* import is still flagged as a real error.
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*", "sentence_transformers.*", "hnswlib", "mcp.*",
+          "langchain_core.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
