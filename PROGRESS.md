@@ -149,14 +149,20 @@ Detail/rationale in `plans/cosmic-watching-giraffe.md`. Acceptance bar per works
           model (`Qwen3-0.6B` + `/no_think`) one 2-turn scenario took ~350 s/add → **~11.5 h** for
           the 118-add `small` suite, AND Mem0 scored **answer/contradiction 0.00** (too weak to be a
           fair rival → an unfair strawman). A *fair* model (≥2B) is ~5 h for Mem0 **alone**.
-        - **Zep:** server needs **Docker (absent here)** or a cloud key (absent) — cannot run at all.
-        - **Letta:** pip-installable but a heavy MemGPT-server framework needing its own LLM backend;
-          slower than Mem0 on local CPU, not wired.
-        So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound**: it needs one capable shared
-        OpenAI-compatible endpoint (CB's `OpenAICompatLLM`/`Embedder` already target it via
-        `OPENAI_BASE_URL`/`_API_KEY`) + the Letta/Zep adapters. The Mem0 adapter now has
-        `MEM0_MODEL`/`MEM0_MAX_NEW_TOKENS`/`MEM0_NO_THINK` knobs so that run is a one-liner. Detail in
-        the harness `RESULTS_curated_brain.md` (§Measured feasibility). **Not agent-provisionable here.**
+        - **Zep — CORRECTED (was wrongly "needs Docker"):** Zep's own engine **Graphiti** runs
+          in-process over an **embedded Kuzu** graph DB — no Docker. Built `adapters/zep_graphiti.py`
+          (`KuzuDriver(":memory:")`, LLM→OpenAI endpoint, deterministic embedder + reranker).
+        - **Letta:** pip-installable (0.16.8); heavy MemGPT framework needing an LLM backend; not wired.
+        - **MPS GPU works (was wrongly "broken"):** but every local model failed to serve fast+sane —
+          Ollama registry download stalls; Ministral-8B MPS Metal GQA crash; Qwen3 bf16-on-MPS <2 tok/s;
+          fp16 `.to(mps)` load hang; CPU ~5–11 h. Built `tools/mps_openai_server.py` (shared local
+          OpenAI endpoint) — **endpoint-ready but not validated end-to-end** (no working fast local model).
+        So the headline "≥ each of Mem0/Letta/Zep" is **endpoint-bound, not impossible**: the adapters
+        (Mem0 via `MEM0_OPENAI_BASE`, Zep via `ZEP_OPENAI_BASE`) + CB (`OpenAICompatLLM`) all target one
+        OpenAI-compatible endpoint. Point any **hosted** endpoint at them and the run is a one-liner per
+        backend + `compare`. Three earlier "blocked" beliefs (offline / Zep-needs-Docker / MPS-broken)
+        were overturned by probing. Detail: harness `RESULTS_curated_brain.md` (§Measured feasibility +
+        §Update). **Local fast inference not provisionable on this box; a hosted endpoint is.**
 
 ### Track 2 — PRODUCTIONIZE (make the numbers hold under load)
 - [~] **C. Storage & scale.** *(durable persistence landed — reviewer PASS 2026-06-18)*
