@@ -14,6 +14,8 @@ local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
 scale = ["hnswlib>=0.7"]
 # MCP server (curated_brain/mcp_server.py) so any agent host can mount the memory layer.
 mcp = ["mcp>=1.0"]
+# LangChain Retriever (curated_brain/langchain.py) to drop into any retrieval chain/agent.
+langchain = ["langchain-core>=0.3"]
 
 [project.scripts]
 curated-brain-mcp = "curated_brain.mcp_server:main"

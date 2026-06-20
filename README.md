@@ -122,6 +122,16 @@ pip install -e ".[mcp]"
 curated-brain-mcp            # stdio server; set CB_MCP_PATH=store.json to persist across runs
 ```
 
+## Use it from LangChain
+
+```python
+from curated_brain.langchain import build_retriever   # pip install -e ".[langchain]"
+
+retriever = build_retriever()                          # heuristic extractor: raw text in
+retriever.cb.write("Erin lives in Vienna.", session_id="s", timestamp=0.0)
+docs = retriever.invoke("Where does Erin live?")       # standard LangChain Runnable API
+```
+
 ## How it works
 
 | Layer | Module |

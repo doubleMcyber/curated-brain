@@ -23,6 +23,8 @@ the project is pre-1.0, so the API may still change.
   at scale; brute force stays the deterministic default.
 - **MCP server** (`curated_brain.mcp_server`, `[mcp]` extra) + `curated-brain-mcp` console
   script — mount the memory layer on any agent host.
+- **LangChain Retriever** (`curated_brain.langchain.build_retriever`, `[langchain]` extra) —
+  drop the curated context into any retrieval chain/agent via the standard `.invoke()` API.
 - Re-embed-on-model-upgrade migration (`CuratedBrain.reembed`).
 - Observability metrics (`CuratedBrain.metrics`): write-decision breakdown, discard rate, size,
   and **cost accounting** (embed/extract calls + tokens, `avg_context_tokens`).
