@@ -44,9 +44,11 @@ the project is pre-1.0, so the API may still change.
   facts (the store grows with distinct facts, not observations), with full recall after
   consolidation and a byte-identical snapshot round-trip at scale.
 - Complete top-level public API in `curated_brain/__init__` (imports stay lazy).
-- **Benchmarks** on an independent offline harness (see README): CB wins precision +
-  contradiction-resolution vs strong RAG references and (preliminary, small local model) vs
-  **Mem0**; competitive on recall. Not yet the full named-rival claim — see README scope.
+- **Benchmarks** on an independent offline harness, now **reproducible from a clean checkout**
+  via `benchmark/run_offline.sh` (+ `benchmark/README.md`): CB wins precision +
+  contradiction-resolution + staleness vs strong RAG references and (preliminary, n=3, small
+  local model) vs **Mem0**; competitive on recall. Not yet the full named-rival claim — the doc
+  states the exact endpoint/throughput needed to finish it.
 
 ### Fixed
 - **Silent bi-temporal corruption:** a non-finite timestamp created an "open" fact invisible
