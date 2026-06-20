@@ -471,3 +471,18 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
   reviewer PASS** — verified request bodies, zero-vector/empty-batch/float64 contract, no network/heavy-dep
   at import, temperature=0.0 default; zero bugs (1 nitpick: bare KeyError on malformed responses).
   Branch `claude/open-domain-backstop`.
+- 2026-06-19 — **Planning pass (Opus architect) + hybrid retrieval (P0).** Strategic review produced
+  a prioritized offline plan (P0–P9). Headline insight: the references use the SAME lexical embedder
+  class, so CB's recall comparison is FAIR; hybrid lexical+semantic retrieval is the #1 lever.
+  **P0 LANDED, reviewer PASS:** `VectorTier.search` now fuses 0.5·embedding-sim + 0.5·jaccard before
+  truncating to k (general, deterministic, AC-9 exact, `nearest`/novelty stay pure-embedding). It
+  FIXES bge's paraphrase regression (longitudinal/lexgap → 1.00) but does NOT close the headline recall
+  gap — the remaining bge loss is `needle`, a surprise-gate/storage interaction, not retrieval (so a
+  ranking change can't fix it). Honestly framed, not over-claimed. Gate 99 passed.
+  **Remaining priorities (offline, general, NOT benchmark-tuning):** P1 entity resolution/canonicalization
+  (alias map — biggest general accuracy lever); P2 relation auto-detection (object-is-an-entity → any
+  multi-hop); P5 move the entity-scoped multi-word stale filter INTO core (today the harness adapter
+  props up staleness=0.00 via `_superseded_turns` — an honesty wrinkle); P3 wire `HnswIndex.topk`+over-fetch
+  into the tier (real end-to-end ANN speedup) + P7 index the structured tier → P4 ≥1e5 soak test; P6
+  LangChain adapter; CI: run cassette tests in-gate + coverage. Defer P8 (Mem0 speedup — low ROI on a
+  weak model) and P9 (logprob surprise — no metric movement). Branch `claude/heuristic-extractor`.
