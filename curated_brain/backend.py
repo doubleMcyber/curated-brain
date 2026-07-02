@@ -390,7 +390,10 @@ class CuratedBrain(MemoryBackend):
             # for EVERY known entity named in the question (round-robin so a multi-entity
             # question surfaces each), reserving budget for vector recall. This is the main
             # reason a hybrid store loses to plain RAG on open benchmarks.
-            budget = max(1, self._max_ctx - 1)  # keep >=1 slot for the vector hits below
+            # Reserve HALF the context for vector recall: the old all-but-one reservation
+            # let the backstop flood the payload with structured facts, starving raw
+            # episodic recall exactly on the open-domain questions that need it.
+            budget = max(1, (self._max_ctx + 1) // 2)
             qtoks = set(tokenize(question, drop_stop=False))
             # Canonicalize matched tokens and dedupe (so "erin" and "smith" -> one "erin smith").
             mentioned = sorted({self._resolver.canonical(e)

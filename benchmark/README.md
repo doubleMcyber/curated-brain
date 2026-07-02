@@ -55,7 +55,36 @@ an externally-authored benchmark. Full per-category breakdown, the `bge` real-em
 and the provenance audit live in the harness repo's
 [`RESULTS_curated_brain.md`](https://github.com/doubleMcyber/longitudinal-memory-eval-harness/blob/claude/curated-brain-adapter/RESULTS_curated_brain.md).
 
-## Result — vs a named system (Mem0), preliminary and **mixed**
+## Result — LongMemEval vs ALL THREE named rivals (2026-07-02, first full run)
+
+The named-rival run finally executed locally (ollama + qwen2.5:7b for every system's LLM
+calls, answer generation, and judging; same nomic embedder for all — the memory layer is the
+only variable). Dataset: **LongMemEval (externally authored)**, oracle variant, stratified
+n=138 (seed 42). Full protocol, per-type table, disclosures:
+[`RESULTS_longmemeval.md`](https://github.com/doubleMcyber/longitudinal-memory-eval-harness/blob/claude/curated-brain-adapter/RESULTS_longmemeval.md).
+
+| system | accuracy | wall time |
+|---|---|---|
+| Letta 0.16.8 | **0.471** | 159 min |
+| **Curated Brain** | 0.261 | **20 min** |
+| Mem0 2.0.7 | 0.203 | 77 min |
+| Zep (Graphiti+Kuzu) | 0.065 | 254 min |
+
+**Stated plainly:** Curated Brain **decisively beats Zep on accuracy** (p<0.0001) and beats
+both Mem0 and Zep on cost; vs **Mem0** its accuracy edge (0.261 vs 0.203) is **within noise
+at n=138** (paired McNemar p=0.24 — a statistical tie on accuracy, a clear cost win).
+**Letta beats Curated Brain on accuracy** (0.471 vs 0.261, p=0.0002) at ~8× the wall time —
+so the full "≥ each of Mem0/Letta/Zep" claim is **NOT met on this variant**. Key context: with only
+~2 evidence sessions per oracle question, Letta's agent answers with the transcripts
+effectively still in its context window (agentic full-context reading, the accuracy ceiling
+memory systems trade against); the `_s` variant (~115k-token haystacks that overflow any
+context) is the follow-up setting where retrieval quality, not context capacity, decides.
+CB is the strongest of all four on **knowledge-update** (belief revision — the bi-temporal
+supersede design working as intended); its measured weak spots are temporal reasoning and
+preference summarization. Judge is the shared local model, not the official GPT-4o —
+numbers are internally comparable, not leaderboard-comparable.
+
+## Result — vs a named system (Mem0), preliminary and **mixed** (older, offline)
 
 A head-to-head vs **Mem0** (`mem0ai` 2.0.7), run fully offline (Mem0 driven by a small local
 model + the same offline embedder, in-memory qdrant). Mem0 is CPU-bound (~2.7 min/add), so this is
