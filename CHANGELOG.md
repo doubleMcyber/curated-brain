@@ -51,6 +51,23 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Added (Phase-3a production essentials, 2026-07-02)
+- **Hard erasure** (`CuratedBrain.forget(subject, predicate=None)`) — the GDPR path and the
+  one deliberate exception to never-hard-delete: removes the subject's facts (open AND
+  superseded history; object-side facts too on a full-subject forget), the episodic/vector
+  records asserting them, entity-tagged vector records, echo-guard entries, and the resolver
+  entry. Documented limit: free-text records that merely mention the entity with no fact link
+  are not traceable and remain.
+- **Inverse / set queries** (`CuratedBrain.answer_who(predicate, object, at=None)`,
+  `StructuredTier.subjects_where`) — "who lives in Berlin?", "who reports to Bob?" — backed
+  by a new (predicate, object) index; as-of variants supported.
+- **Snapshots with the production ANN**: `snapshot()`/`save()`/`stats()` now work with an
+  `HnswIndex`-backed tier (records-only payload; vectors re-derived from text on load, which
+  demotes to the exact index — previously all three CRASHED with the `[scale]` backend).
+- **Derived-state caching**: the planner vocabulary, relation predicates, and supersede
+  filters are computed once and invalidated on mutation instead of full-store scans on every
+  query.
+
 ### Changed (Phase-1 extraction-default pass, 2026-07-02)
 - **One predicate vocabulary.** The heuristic extractor's verb patterns now emit the same
   canonical predicates as the possessive path / planner / dataset (`location`→`city` via

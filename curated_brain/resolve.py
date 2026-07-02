@@ -104,6 +104,18 @@ class EntityResolver:
                 return promoted
         return s
 
+    def forget(self, name: str) -> None:
+        """Drop an entity from the vocabulary (the erasure path). Component-index entries
+        pointing at the forgotten full name are removed; entries poisoned as ambiguous stay
+        poisoned — forgetting one of two homonym entities must not let the survivor silently
+        claim the shared token that was refused while both existed (conservative-by-design)."""
+        s = normalize(name)
+        self._full.discard(s)
+        self._singletons.discard(s)
+        for index in (self._given, self._surname):
+            for tok in [t for t, v in index.items() if v == s]:
+                del index[tok]
+
     # ------------------------------------------------------------------ persistence --
     def to_dict(self) -> dict:
         """Full learned state, JSON-able and byte-stable (sorted). The ambiguity history

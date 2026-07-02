@@ -115,6 +115,7 @@ class CuratedBrain(MemoryBackend):
     _asserted_texts: set[str]
     _decisions: dict[str, int]
     _cost: dict[str, int]
+    _derived: tuple | None
 
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
@@ -155,6 +156,7 @@ class CuratedBrain(MemoryBackend):
             # comparison, leaving an "open" but un-queryable fact — reject it at the door.
             raise ValueError(f"timestamp must be finite, got {timestamp!r}")
         meta = metadata or {}
+        self._derived = None  # any write may change the derived planner/stale state
         fact = meta.get("fact")
         if fact is not None:
             _validate_fact(fact)
@@ -284,6 +286,58 @@ class CuratedBrain(MemoryBackend):
         f = self.structured.resolve_path(self._resolver.canonical(subject), predicates, at)
         return f.object if f else ""
 
+    def answer_who(self, predicate: str, object: str, *, at: float | None = None) -> list[str]:
+        """Inverse / set query: every subject for which (predicate, object) currently holds
+        (or held as believed at ``at``) — "who lives in Berlin?", "who reports to Bob?"."""
+        return self.structured.subjects_where(predicate, object, at)
+
+    # ------------------------------------------------------------------ erasure ------
+    def forget(self, subject: str, *, predicate: str | None = None) -> dict:
+        """Hard-erase an entity's data (e.g. a GDPR erasure request) — the ONE deliberate
+        exception to the never-hard-delete invariant, on explicit request only.
+
+        Removes: the subject's structured facts, open AND superseded history (one predicate
+        if given; on a full-subject forget, also facts naming the subject as OBJECT — other
+        entities' facts embedding this entity's data); episodic/vector records ASSERTING a
+        removed fact; vector records entity-tagged with the subject; the echo-guard entries
+        of removed texts; and the resolver vocabulary entry (full forget).
+
+        Documented limit: a free-text record that merely MENTIONS the entity with no
+        extracted fact link is not traceable to it and remains — full text-level erasure
+        needs a scan the caller can do via the returned report + their own audit."""
+        self._derived = None
+        ns = self._resolver.canonical(subject)
+        np_ = normalize(predicate) if predicate is not None else None
+        facts_removed = self.structured.forget(ns, predicate, as_object=predicate is None)
+
+        doomed_rids: set[str] = set()
+        for r in self._episodes:
+            if r.fact_key:
+                s, p, o = _fact_key_parts(r)
+                if (s == ns and (np_ is None or p == np_)) or (np_ is None and o == ns):
+                    doomed_rids.add(r.id)
+        if np_ is None:  # full forget: entity-tagged vector records go too
+            for vr in self.vector.meta.values():
+                if ns in vr.entities_norm:
+                    doomed_rids.add(vr.rid)
+
+        kept: list[EpisodicRecord] = []
+        episodes_removed = 0
+        for r in self._episodes:
+            if r.id in doomed_rids:
+                episodes_removed += 1
+                self._asserted_texts.discard(normalize(r.content))
+            else:
+                kept.append(r)
+        self._episodes = kept
+        self._ep_by_id = {r.id: r for r in kept}
+        for rid in sorted(doomed_rids):
+            self.vector.remove_by_rid(rid)
+        if np_ is None:
+            self._resolver.forget(ns)
+        return {"facts": facts_removed, "episodes": episodes_removed,
+                "vector_records": len(doomed_rids)}
+
     # ------------------------------------------------------------------ query path ---
     def query(self, question: str, *, session_id: str, timestamp: float,
               k: int = 8) -> Retrieval:
@@ -294,11 +348,7 @@ class CuratedBrain(MemoryBackend):
             raise TypeError(f"question must be str, got {type(question).__name__}")
         if not math.isfinite(timestamp):
             raise ValueError(f"timestamp must be finite, got {timestamp!r}")
-        pred_vocab = frozenset(normalize(f.predicate) for f in self.structured.facts)
-        # Predicates whose object is itself a known entity are RELATIONS (traversable in a
-        # multi-hop chain) — auto-detected, not hardcoded to "manager".
-        relation_preds = frozenset(normalize(f.predicate) for f in self.structured.facts
-                                   if normalize(f.object) in self._entities)
+        pred_vocab, relation_preds, (stale_rids, stale_pairs) = self._derived_state()
         plan = self.planner.plan(question, entities=self._entities, predicates=pred_vocab,
                                  relation_preds=relation_preds, session_ts=self._session_ts)
         # Entity resolution: map the matched entity token to its canonical subject key, so a
@@ -355,7 +405,6 @@ class CuratedBrain(MemoryBackend):
                     break
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=cent)
-        stale_rids, stale_pairs = self._stale_filters()
         for it in fuse(vhits, now=timestamp, stale_rids=stale_rids, stale_pairs=stale_pairs):
             if len(lines) >= self._max_ctx:
                 break
@@ -370,6 +419,19 @@ class CuratedBrain(MemoryBackend):
         self._cost["queries"] += 1
         self._cost["context_tokens_served"] += tokens_in
         return Retrieval(context=context, citations=citations, tokens_in=tokens_in)
+
+    def _derived_state(self):
+        """Query-path state derived purely from the stores — predicate vocabulary, relation
+        predicates (object is itself a known entity — auto-detected, not hardcoded to
+        "manager"), and the supersede filters. Previously recomputed with full fact scans on
+        EVERY query; now cached and invalidated by any mutation (write/consolidate/forget/
+        restore/reembed)."""
+        if self._derived is None:
+            pred_vocab = frozenset(normalize(f.predicate) for f in self.structured.facts)
+            relation_preds = frozenset(normalize(f.predicate) for f in self.structured.facts
+                                       if normalize(f.object) in self._entities)
+            self._derived = (pred_vocab, relation_preds, self._stale_filters())
+        return self._derived
 
     def _stale_filters(self) -> tuple[set[str], list[tuple[frozenset[str], frozenset[str]]]]:
         """Supersede-filtering inputs for :func:`fuse` — provenance-linked first, entity-scoped
@@ -416,6 +478,7 @@ class CuratedBrain(MemoryBackend):
         vectors are recomputed and each record's ``embed_model_id`` is stamped with the new
         model. Lets the layer survive an embedder upgrade without losing recall.
         """
+        self._derived = None
         old = self.embedder.model_id
         self.embedder = new_embedder
         n = self.vector.reembed(new_embedder)
@@ -430,6 +493,7 @@ class CuratedBrain(MemoryBackend):
         history lives non-lossily in the structured tier. Remaining free-text episodes have
         only true near-duplicates merged. Structured facts and provenance are never touched,
         so accuracy is preserved and the audit trail is intact."""
+        self._derived = None
         episodes_in = len(self._episodes)
         current_obj = {(normalize(f.subject), normalize(f.predicate)): normalize(f.object)
                        for f in self.structured.open_facts}
@@ -537,6 +601,7 @@ class CuratedBrain(MemoryBackend):
         }
 
     def reset(self) -> None:
+        self._derived = None
         self._counter = 0
         self._episodes = []
         self._ep_by_id = {}
@@ -610,6 +675,7 @@ class CuratedBrain(MemoryBackend):
             raise ValueError(f"snapshot embedding dim {snap_dim} != live embedder dim "
                              f"{self.embedder.dim}; restore with the matching embedder, "
                              f"then migrate via reembed()")
+        self._derived = None
         self._counter = state["counter"]
         self._episodes = [EpisodicRecord(**d) for d in state["episodic"]]
         self._ep_by_id = {r.id: r for r in self._episodes}

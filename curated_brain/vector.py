@@ -243,17 +243,28 @@ class VectorTier:
 
     # ------------------------------------------------------------------ persistence --
     def to_dict(self) -> dict:
-        if not hasattr(self.index, "to_dict"):  # e.g. an opt-in HnswIndex
-            raise TypeError(
-                f"{type(self.index).__name__} is not serializable; byte-deterministic "
-                "snapshots require the default BruteForceIndex (AC-1).")
-        return {
+        """Serialize the tier. With the default BruteForceIndex the exact vectors are
+        stored (byte-deterministic, embedder-drift-proof). With an opt-in ANN index (no
+        ``to_dict``) the records alone are stored and vectors are re-derived from text on
+        load — previously this path raised, which meant ``snapshot()``, ``save()`` and even
+        ``stats()`` all CRASHED the moment the production index was plugged in."""
+        out: dict = {
             "next": self._next,
-            "index": self.index.to_dict(),
             "meta": [[k, vars(r)] for k, r in self.meta.items()],
         }
+        if hasattr(self.index, "to_dict"):
+            out["index"] = self.index.to_dict()
+        return out
 
     def load(self, d: dict) -> None:
         self._next = d["next"]
-        self.index = BruteForceIndex.from_dict(d["index"])
         self.meta = {int(k): VectorRecord(**fields) for k, fields in d["meta"]}
+        if d.get("index"):
+            self.index = BruteForceIndex.from_dict(d["index"])
+        else:
+            # ANN-serialized tier: rebuild exactly by re-embedding the stored texts
+            # (deterministic for a deterministic embedder). Note the demotion: the restored
+            # tier runs on BruteForceIndex — re-wrap in an HnswIndex if scale demands it.
+            self.index = BruteForceIndex(self.embedder.dim)
+            for key, rec in self.meta.items():
+                self.index.add(key, self.embedder.embed(rec.text))
