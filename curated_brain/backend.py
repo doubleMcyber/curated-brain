@@ -119,7 +119,8 @@ class CuratedBrain(MemoryBackend):
 
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
-                 extractor=None, max_context_items: int | None = None) -> None:
+                 extractor=None, max_context_items: int | None = None,
+                 summarizer=None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
@@ -139,6 +140,10 @@ class CuratedBrain(MemoryBackend):
         self._extractor_takes_speaker = (
             extractor is not None
             and "speaker" in inspect.signature(extractor.extract).parameters)
+        # Optional consolidation summarizer (an `LLM` protocol object): merged claims get a
+        # real one-sentence summary instead of the most-reinforced member verbatim (PRD §8
+        # "cluster & summarize"). Default None keeps consolidation model-free + deterministic.
+        self.summarizer = summarizer
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -545,6 +550,17 @@ class CuratedBrain(MemoryBackend):
 
     def _merge_to_claim(self, members: list[EpisodicRecord]) -> EpisodicRecord:
         rep = representative(members)
+        content = rep.content
+        if self.summarizer is not None and len(members) > 1:
+            # Real summarization (PRD §8 "cluster & summarize"): one compact claim over the
+            # cluster. Falls back to the representative if the model returns nothing.
+            notes = "\n".join(f"- {r.content}" for r in members)
+            out = self.summarizer.complete(
+                "Merge these related memory notes into ONE short factual sentence. "
+                "Keep every name and value exactly as written; add nothing new.\n"
+                f"{notes}\nSummary:").strip()
+            if out:
+                content = out.splitlines()[0].strip()
         for r in members:
             self.vector.remove_by_rid(r.id)
         # Propagate the members' subjects to the claim so entity-filtered vector search can
@@ -553,7 +569,7 @@ class CuratedBrain(MemoryBackend):
         entities = sorted({_fact_key_parts(r)[0] for r in members if r.fact_key})
         claim = EpisodicRecord(
             id=self._next_id("claim"), session_id=rep.session_id, seq=len(self._episodes),
-            wall_ts=rep.wall_ts, actor="system", content=rep.content,
+            wall_ts=rep.wall_ts, actor="system", content=content,
             embed_model_id=self.embedder.model_id, surprise=rep.surprise,
             provenance={"source": "consolidation", "merged_from": [r.id for r in members]},
             support_count=sum(r.support_count for r in members),

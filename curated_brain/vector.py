@@ -94,6 +94,7 @@ class HnswIndex:
         self._idx = hnswlib.Index(space="ip", dim=dim)  # unit vectors -> inner product == cosine
         self._idx.init_index(max_elements=max_elements, ef_construction=ef_construction,
                              M=m, random_seed=seed)
+        self._ef = ef
         self._idx.set_ef(ef)
         self._idx.set_num_threads(1)
         self._live: set[int] = set()
@@ -118,8 +119,22 @@ class HnswIndex:
         ``1 - cosine`` for unit vectors, so the score is ``1 - distance``."""
         if not self._live:
             return []
+        k = min(k, self._added)
+        if k > self._ef:  # hnswlib requires ef >= k (filter-pushdown escalates k)
+            self._ef = k + 64
+            self._idx.set_ef(self._ef)
         q = np.asarray(vector, dtype=np.float32).reshape(1, -1)
-        labels, dists = self._idx.knn_query(q, k=min(k, self._added))
+        while True:
+            try:
+                labels, dists = self._idx.knn_query(q, k=k)
+                break
+            except RuntimeError:
+                # A duplicate-heavy corpus degenerates the HNSW graph so fewer than k
+                # points are reachable ("cannot return contiguous 2D array"). Degrade to
+                # what IS reachable instead of crashing the query path.
+                if k <= 1:
+                    return []
+                k = max(1, k * 4 // 5)
         return [(int(lbl), 1.0 - float(d)) for lbl, d in zip(labels[0], dists[0], strict=True)
                 if int(lbl) in self._live]
 
@@ -185,32 +200,45 @@ class VectorTier:
         qtext = query if isinstance(query, str) else None
         qv = self.embedder.embed(query) if qtext is not None else np.asarray(query)
         ent = normalize(entity) if entity is not None else None
-        # A real ANN backend (HnswIndex) exposes `topk` — over-fetch k*_OVERFETCH candidates
-        # (the sublinear fast path); the exact BruteForce default ranks ALL records.
-        if hasattr(self.index, "topk"):
-            ranked = self.index.topk(qv, k * _OVERFETCH)
-        else:
-            ranked = self.index.rank(qv)  # [(key, embedding-similarity)]
-        if qtext is not None:  # hybrid: re-rank by semantic + lexical BEFORE truncating to k
-            ranked = sorted(
+
+        def _rerank(ranked):
+            if qtext is None:
+                return ranked
+            # hybrid: re-rank by semantic + lexical BEFORE truncating to k
+            return sorted(
                 ((key, _W_SEM * cos + _W_LEX * jaccard(qtext, self.meta[key].text))
                  for key, cos in ranked),
                 key=lambda kc: (-kc[1], kc[0]))
-        out: list[tuple[VectorRecord, float]] = []
-        for key, score in ranked:
-            r = self.meta[key]
-            if t is not None and r.wall_ts > t:
-                continue
-            if tier is not None and r.tier != tier:
-                continue
-            if ent is not None and ent not in r.entities_norm:
-                continue
-            if window is not None and not (window[0] <= r.wall_ts <= window[1]):
-                continue
-            out.append((r, score))
-            if len(out) >= k:
-                break
-        return out
+
+        def _filtered(ranked):
+            out: list[tuple[VectorRecord, float]] = []
+            for key, score in ranked:
+                r = self.meta[key]
+                if t is not None and r.wall_ts > t:
+                    continue
+                if tier is not None and r.tier != tier:
+                    continue
+                if ent is not None and ent not in r.entities_norm:
+                    continue
+                if window is not None and not (window[0] <= r.wall_ts <= window[1]):
+                    continue
+                out.append((r, score))
+                if len(out) >= k:
+                    break
+            return out
+
+        if hasattr(self.index, "topk"):
+            # ANN fast path with FILTER-PUSHDOWN: a fixed over-fetch under-recalls when the
+            # metadata filters are selective (the k*_OVERFETCH approximate candidates may
+            # all fail the filter while matches exist deeper). Escalate the fetch until k
+            # survivors are found or the whole live set has been considered.
+            fetch = k * _OVERFETCH
+            while True:
+                out = _filtered(_rerank(self.index.topk(qv, fetch)))
+                if len(out) >= k or fetch >= len(self.meta):
+                    return out
+                fetch *= 2
+        return _filtered(_rerank(self.index.rank(qv)))  # exact default: ranks ALL records
 
     def nearest(self, embedding: np.ndarray) -> tuple[VectorRecord, float] | None:
         """The single most-similar stored record (for surprise/novelty scoring), or None."""
