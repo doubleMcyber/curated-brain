@@ -241,22 +241,51 @@ def test_fuse_drops_superseded_values():
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),
         (VectorRecord(rid="2", text="Alice lives in Munich.", wall_ts=2.0, session_id="s"), 0.8),
     ]
-    out = fuse(hits, now=10.0, stale_token_sets=[frozenset({"berlin"})])
+    out = fuse(hits, now=10.0, stale_pairs=[(frozenset({"alice"}), frozenset({"berlin"}))])
     assert [it.rid for it in out] == ["2"]  # the superseded "Berlin" record is filtered out
 
 
 def test_fuse_drops_multiword_stale_values():
-    # Token-subset matching catches a MULTI-WORD stale value (the old single-token
-    # intersection missed these), without dropping a record sharing only a common word.
+    # Entity-scoped token matching catches a MULTI-WORD stale value, without dropping a
+    # record sharing only a common word (and never one about a DIFFERENT entity).
     hits = [
         (VectorRecord(rid="1", text="Priya's address is 14 Rua das Flores, Lisbon.",
                       wall_ts=1.0, session_id="s"), 0.9),
         (VectorRecord(rid="2", text="Priya's address is 88 Calle Mayor, Madrid.",
                       wall_ts=2.0, session_id="s"), 0.8),
     ]
-    stale = [frozenset({"14", "rua", "das", "flores", "lisbon"})]
-    out = fuse(hits, now=10.0, stale_token_sets=stale)
+    stale = [(frozenset({"priya"}), frozenset({"14", "rua", "das", "flores", "lisbon"}))]
+    out = fuse(hits, now=10.0, stale_pairs=stale)
     assert [it.rid for it in out] == ["2"]  # the multi-word stale "…Lisbon" record is dropped
+
+
+def test_fuse_drops_by_provenance_rid():
+    # A record whose ASSERTED fact is superseded is dropped by exact identity, regardless of
+    # phrasing (e.g. pronoun coreference — no subject token in the text at all).
+    hits = [
+        (VectorRecord(rid="1", text="Her current city is Berlin.", wall_ts=1.0,
+                      session_id="s"), 0.9),
+        (VectorRecord(rid="2", text="Alice lives in Munich.", wall_ts=2.0,
+                      session_id="s"), 0.8),
+    ]
+    out = fuse(hits, now=10.0, stale_rids={"1"})
+    assert [it.rid for it in out] == ["2"]
+
+
+def test_fuse_keeps_records_merely_mentioning_a_stale_word():
+    # The old filter matched value tokens alone, store-wide: once any role "manager" was
+    # superseded, EVERY record containing "manager" was filtered ("Erin's manager is Bob").
+    # Entity-scoping keeps records about other entities / other relations.
+    hits = [
+        (VectorRecord(rid="1", text="Erin's manager is Bob.", wall_ts=1.0,
+                      session_id="s"), 0.9),
+        (VectorRecord(rid="2", text="Who manages the Falcon project?", wall_ts=2.0,
+                      session_id="s"), 0.8),
+    ]
+    # Dana's role "manager" was superseded (by "director") — stale pair is (dana, manager).
+    stale = [(frozenset({"dana"}), frozenset({"manager"}))]
+    out = fuse(hits, now=10.0, stale_pairs=stale)
+    assert [it.rid for it in out] == ["1", "2"]  # neither mentions Dana -> neither dropped
 
 
 def test_full_supersede_filter_in_core_no_stale_in_context():

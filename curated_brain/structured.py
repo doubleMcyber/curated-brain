@@ -38,6 +38,12 @@ class StructuredTier:
         Returns ``(record, superseded)`` where ``record`` is the fact now considered
         current (an existing one if the value was merely reasserted) and ``superseded``
         is the fact that was closed, if any.
+
+        Out-of-order guard: a newcomer whose ``valid_from`` PRECEDES the open fact's is a
+        retroactive/historical assertion, not an update — it is inserted with its valid
+        interval closed at the open fact's ``valid_from`` instead of superseding forward.
+        (Previously it closed the open fact with ``valid_to < valid_from`` — an inverted
+        interval that silently corrupted every subsequent ``as_of`` query.)
         """
         key = (normalize(subject), normalize(predicate))
         superseded: Fact | None = None
@@ -45,6 +51,20 @@ class StructuredTier:
             if f.is_open:
                 if normalize(f.object) == normalize(object):
                     return f, None  # same value reasserted — no new row
+                if valid_from < f.valid_from:
+                    # Historical fact arriving late: record it as already-superseded by the
+                    # open fact (closed valid interval, open transaction interval — we only
+                    # learned it now, but it stopped being true when the open fact began).
+                    hist = Fact(
+                        id=fact_id, subject=subject, predicate=predicate, object=object,
+                        valid_from=valid_from, valid_to=f.valid_from,
+                        created_at=created_at, expired_at=INF,
+                        confidence=confidence, provenance=provenance or {},
+                        superseded_by=f.id,
+                    )
+                    self.facts.append(hist)
+                    self._index(hist)
+                    return f, hist  # the open fact stays current; the newcomer is history
                 # Conflict: close the old interval (valid + transaction time) and link.
                 f.valid_to = valid_from
                 f.expired_at = created_at

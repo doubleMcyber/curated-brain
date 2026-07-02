@@ -33,7 +33,10 @@ class EpisodicRecord:
     last_seen_ts: float = 0.0
     tier: str = "episodic"  # "episodic" | "semantic"
     supports: list[str] = field(default_factory=list)  # episode ids a semantic claim covers
-    fact_key: str | None = None  # "subject|predicate|object" link to the triple it asserts
+    # Link to the (normalized) triple this episode asserts. Stored as a 3-item list — the
+    # old "subject|predicate|object" string crashed consolidate() on any value containing
+    # "|". Legacy string snapshots are still accepted on restore (see backend._fact_key_parts).
+    fact_key: list[str] | str | None = None
 
 
 @dataclass

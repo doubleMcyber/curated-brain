@@ -491,6 +491,26 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 2 correctness fixes (red-team v2), reviewer PASS, harness numbers
+  byte-identical** (re-ran the standard suite: 0.88/0.79/1.00/0.00/0.76 — unchanged). Fixed:
+  (1) pipe-in-fact-value crash in consolidate (fact_key now a list; legacy strings parsed
+  `split("|", 2)`); (2) bi-temporal decoupling — `metadata.fact["valid_from"]` records
+  retroactive facts, and an out-of-order older assertion becomes closed HISTORY instead of
+  inverting the open fact's interval; (3) unicode tokenization (`[^\W_]+` + casefold, NFKC
+  normalize — identity on ASCII; non-Latin text now embeds + retrieves instead of zero-vector);
+  (4) supersede-filtering rebuilt: provenance-linked (superseded fact_key → drop by rid) +
+  entity-scoped token fallback, staleness judged per (subject,predicate) — a superseded role
+  "manager" no longer filters every record containing the word store-wide. *Honest tradeoff
+  (reviewer-noted): a free-text record with NO fact link and NO subject token stating a stale
+  value now leaks where the old global filter caught it — accepted; the old filter's store-wide
+  false positives were worse.* (5) resolver state persisted in snapshots (ambiguity history
+  restore-faithful) + restore rejects dim-mismatched snapshots up front; (6) MCP: lock (hosts
+  issue concurrent calls), wall-clock default timestamps (was t=0.0 — silently killed all
+  temporal semantics), atomic batched persistence; (7) `max_context_items=` ctor knob (default
+  4 unchanged) + merged claims keep entities/fact_key so consolidation no longer hides them from
+  entity-filtered search. +17 tests (141 passed). *Reviewer latent note: successive out-of-order
+  historical inserts store loose (overlapping) valid_to bounds — as_of answers stay correct;
+  optional future hardening.*
 - 2026-07-02 — **Phase 0 credibility triage (docs-only).** Red-team v2 recorded (section above).
   Public claims corrected: README + benchmark/README no longer say "independent / third-party /
   never saw during development" (harness relabeled same-author diagnostic suite); AC-9 spoon-feeding

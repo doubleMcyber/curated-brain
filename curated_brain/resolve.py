@@ -104,6 +104,28 @@ class EntityResolver:
                 return promoted
         return s
 
+    # ------------------------------------------------------------------ persistence --
+    def to_dict(self) -> dict:
+        """Full learned state, JSON-able and byte-stable (sorted). The ambiguity history
+        (_AMBIGUOUS poisons, standalone singletons) is NOT derivable from the final canonical
+        subjects alone — rebuilding from facts let a token refused before snapshot promote
+        after restore, i.e. the same query answered differently across a restart."""
+        def enc(index: dict) -> list:
+            return sorted((k, None if v is _AMBIGUOUS else v) for k, v in index.items())
+        return {"full": sorted(self._full), "given": enc(self._given),
+                "surname": enc(self._surname), "singletons": sorted(self._singletons)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> EntityResolver:
+        r = cls()
+        r._full = set(d.get("full", []))
+        r._singletons = set(d.get("singletons", []))
+        for attr, key in (("_given", "given"), ("_surname", "surname")):
+            index = getattr(r, attr)
+            for tok, val in d.get(key, []):
+                index[tok] = _AMBIGUOUS if val is None else val
+        return r
+
     @property
     def entities(self) -> set[str]:
         """The vocabulary the planner matches questions against: full names + standalone single
