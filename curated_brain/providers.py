@@ -115,8 +115,8 @@ class TransformersLLM:
         return self._model
 
     def complete(self, prompt: str) -> str:
+        model = self._ensure()  # guarded import first -> actionable extras error, not torch's
         import torch
-        model = self._ensure()
         msgs = [{"role": "user", "content": prompt}]
         text = self._tok.apply_chat_template(
             msgs, tokenize=False, add_generation_prompt=True)
