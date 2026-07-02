@@ -51,6 +51,27 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Changed (Phase-1 extraction-default pass, 2026-07-02)
+- **One predicate vocabulary.** The heuristic extractor's verb patterns now emit the same
+  canonical predicates as the possessive path / planner / dataset (`location`→`city` via
+  `PREDICATE_ALIASES`), so "Erin moved to Vienna" supersedes "Erin's city is Berlin" instead
+  of living in a parallel schema. (Breaking for callers who queried the old `location` key.)
+- **First-person extraction** (`resolve_first_person`): "My email is X" / "I moved to Berlin"
+  extract as facts about a declared speaker (`metadata={"speaker": ...}`; the MCP server
+  defaults to "User"). Opt-in — without a declared speaker, first-person text asserts nothing
+  (and a bare capitalized pronoun is no longer mistaken for a name).
+- **Echo suppression (Pillar B).** A verbatim restatement of an already-asserted statement
+  reinforces instead of re-asserting — a late echo of "Alice lives in Riga" no longer flips
+  her city back after "Alice has moved to Tallinn". A genuine revert needs fresh phrasing.
+- **AC-9 without spoon-feeding.** `run_harness(extraction=True)` runs Curated Brain on the
+  same raw text as every baseline (no `metadata.fact`); it scores identically to the spoon-fed
+  wiring (C1–C6 = 1.0/1.0/0.99/0.91/1.0/1.0) and strictly beats all three baselines on every
+  category — locked in CI (`tests/test_extraction_default.py`). External harness results are
+  bit-identical (same determinism hash).
+- PRD §6: the logprob/predictive-surprise estimator is explicitly **deferred post-v1** (cost
+  multiplier on the write path; unvalidatable without a capable endpoint; no claim depends on
+  it). Planner: predicates actually stored now outrank keyword-mapped guesses.
+
 ### Fixed
 - **Silent bi-temporal corruption:** a non-finite timestamp created an "open" fact invisible
   to as-of queries — now rejected with a clear error at the write boundary.

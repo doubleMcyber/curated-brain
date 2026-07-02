@@ -103,7 +103,7 @@ def test_heuristic_extracts_possessive_and_verb_forms():
     assert ext.extract("Priya's mailing address is 88 Calle Mayor, Madrid.") == [
         {"subject": "Priya", "predicate": "mailing address", "object": "88 Calle Mayor, Madrid"}]
     assert ext.extract("Bob moved to Berlin.") == [
-        {"subject": "Bob", "predicate": "location", "object": "Berlin"}]
+        {"subject": "Bob", "predicate": "city", "object": "Berlin"}]
     assert ext.extract("Dana works as a designer.") == [
         {"subject": "Dana", "predicate": "role", "object": "designer"}]
     assert ext.extract("Erin reports to Frank.") == [
@@ -119,7 +119,7 @@ def test_heuristic_extracts_relational_forms():
     assert ext.extract("Umbrella is headquartered in Cairo.") == [
         {"subject": "Umbrella", "predicate": "headquarters", "object": "Cairo"}]
     assert ext.extract("Acme is located in Berlin.") == [
-        {"subject": "Acme", "predicate": "location", "object": "Berlin"}]
+        {"subject": "Acme", "predicate": "city", "object": "Berlin"}]
     # "works as" is still a role, not an employer (distinct preposition)
     assert ext.extract("Dana works as a designer.") == [
         {"subject": "Dana", "predicate": "role", "object": "designer"}]

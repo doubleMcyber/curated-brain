@@ -44,10 +44,13 @@ class MemoryService:
         self._lock = threading.Lock()
 
     def write(self, observation: str, session_id: str = "default",
-              timestamp: float | None = None) -> dict:
+              timestamp: float | None = None, speaker: str = "User") -> dict:
         with self._lock:
             ts = time.time() if timestamp is None else timestamp
-            r = self.cb.write(observation, session_id=session_id, timestamp=ts)
+            # Declare the speaker so first-person text ("My email is …") extracts as facts
+            # about them — a single-user server defaults to "User".
+            r = self.cb.write(observation, session_id=session_id, timestamp=ts,
+                              metadata={"speaker": speaker})
             self._dirty += 1
             if self._dirty >= self._persist_every:
                 self._persist()

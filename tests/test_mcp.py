@@ -17,7 +17,7 @@ def test_memory_service_raw_text_roundtrip():
     r = svc.write("Erin lives in Vienna.")
     assert r["stored"] is True and r["reason"] in {"stored", "reinforced", "discarded"}
     # exact structured answer from the extracted fact
-    assert svc.answer("Erin", "location") == "Vienna"
+    assert svc.answer("Erin", "city") == "Vienna"
     # curated query context surfaces the value
     assert "Vienna" in svc.query("Where does Erin live?")
     # stats reflect the stored fact
@@ -29,14 +29,14 @@ def test_memory_service_persists_across_instances(tmp_path):
     MemoryService(path=path).write("Bob lives in Berlin.")  # writes + saves to disk
     reopened = CuratedBrain(seed=0, extractor=HeuristicExtractor())
     reopened.load(path)
-    assert MemoryService(reopened).answer("Bob", "location") == "Berlin"
+    assert MemoryService(reopened).answer("Bob", "city") == "Berlin"
 
 
 def test_consolidate_and_supersede_via_service():
     svc = MemoryService()
     svc.write("Cara lives in Oslo.", timestamp=0.0)
     svc.write("Cara lives in Madrid.", timestamp=1.0)  # supersedes
-    assert svc.answer("Cara", "location") == "Madrid"
+    assert svc.answer("Cara", "city") == "Madrid"
     rep = svc.consolidate()
     assert rep["episodes_in"] >= 1
 

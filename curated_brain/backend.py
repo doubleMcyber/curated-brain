@@ -12,6 +12,7 @@ surprise gate and consolidation worker behind the same interface.
 from __future__ import annotations
 
 import abc
+import inspect
 import json
 import math
 
@@ -111,6 +112,7 @@ class CuratedBrain(MemoryBackend):
     _episodes: list[EpisodicRecord]
     _ep_by_id: dict[str, EpisodicRecord]
     _session_ts: dict[int, float]
+    _asserted_texts: set[str]
     _decisions: dict[str, int]
     _cost: dict[str, int]
 
@@ -131,6 +133,11 @@ class CuratedBrain(MemoryBackend):
         # observations that arrive without a pre-extracted `metadata.fact`. Default None
         # preserves the spoon-fed-fact behavior (and AC-1 determinism) exactly.
         self.extractor = extractor
+        # Extractors MAY accept a `speaker` kwarg (first-person resolution); detected once
+        # here so third-party extractors with the plain extract(text) shape keep working.
+        self._extractor_takes_speaker = (
+            extractor is not None
+            and "speaker" in inspect.signature(extractor.extract).parameters)
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -156,8 +163,25 @@ class CuratedBrain(MemoryBackend):
         # routed to the structured tier below.
         facts = [fact] if fact else []
         if not facts and self.extractor is not None:
-            self._cost["extract_calls"] += 1
-            facts = self.extractor.extract(observation)
+            # Echo suppression (Pillar B): a VERBATIM restatement of a statement whose facts
+            # were already asserted is reinforcement, not new information — re-asserting it
+            # would resurrect a superseded value with a fresh valid_from (a later "Alice
+            # lives in Riga" echo would flip the current city back after her move). A
+            # genuine revert needs new phrasing; an exact byte-duplicate is an echo.
+            if normalize(observation) in self._asserted_texts:
+                pass  # facts stay [] -> the gate reinforces the near-duplicate below
+            else:
+                self._cost["extract_calls"] += 1
+                # First-person resolution is OPT-IN: it fires only when the caller declares
+                # who is speaking (metadata "speaker"/"actor"), so ingestion without that
+                # signal is byte-identical to before.
+                speaker = meta.get("speaker") or meta.get("actor")
+                if speaker and self._extractor_takes_speaker:
+                    facts = self.extractor.extract(observation, speaker=speaker)
+                else:
+                    facts = self.extractor.extract(observation)
+                if facts:
+                    self._asserted_texts.add(normalize(observation))
         # Entity resolution (P1): canonicalize each fact's SUBJECT to a stable key — copy first
         # so the caller's metadata dict is never mutated. A byte no-op on single-token,
         # honorific-free subjects (the synthetic harness), so AC-1/AC-9 stay byte-identical.
@@ -523,6 +547,7 @@ class CuratedBrain(MemoryBackend):
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._resolver = EntityResolver()  # owns the entity vocabulary (`_entities` reads through)
         self._session_ts = {}
+        self._asserted_texts = set()  # normalized fact-bearing texts (extraction echo guard)
         # Operational counters (observability, not core state — kept out of the snapshot).
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
         # Cost accounting for the write + query hot path (the comparable Track-D axes:
@@ -568,6 +593,7 @@ class CuratedBrain(MemoryBackend):
             # derivable from the final canonical subjects — persist it or a token refused
             # before snapshot can promote after restore (same query, different answer).
             "resolver": self._resolver.to_dict(),
+            "asserted_texts": sorted(self._asserted_texts),
         }
 
     def snapshot(self) -> bytes:
@@ -601,6 +627,7 @@ class CuratedBrain(MemoryBackend):
             self._resolver = EntityResolver()
             for f in self.structured.facts:
                 self._resolver.register_canonical(f.subject)
+        self._asserted_texts = set(state.get("asserted_texts", []))
         if "session_ts" in state:  # faithful restore of the as-of-by-session map
             self._session_ts = {int(k): v for k, v in state["session_ts"]}
         else:  # legacy snapshot: rebuild from stored episodes (lossy for discarded sessions)

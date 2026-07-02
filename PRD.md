@@ -175,7 +175,7 @@ Everything sits behind narrow interfaces so no concrete vendor leaks into the co
 For each candidate record, estimate **surprise** = how much the new content was *not* predictable from existing memory. Three estimators, combinable, all frozen-model-friendly:
 
 1. **Semantic novelty (primary, cheap):** `1 − max cosine similarity` to the k nearest existing memories. High novelty ⇒ likely worth keeping.
-2. **Predictive surprise (secondary):** prompt the frozen LLM to predict the answer/next fact given currently-retrieved memory; compare to the actual observation. Large divergence ⇒ high surprise. If the API exposes **logprobs**, use token-level perplexity of the observation under a memory-conditioned prompt as a sharper proxy.
+2. **Predictive surprise (secondary):** prompt the frozen LLM to predict the answer/next fact given currently-retrieved memory; compare to the actual observation. Large divergence ⇒ high surprise. If the API exposes **logprobs**, use token-level perplexity of the observation under a memory-conditioned prompt as a sharper proxy. *Status (v1, 2026-07-02): deferred post-v1.* Estimators 1+3 alone meet AC-5 selectivity on every measured suite; estimator 2 adds an LLM call per write (a large cost multiplier on the hot path) and cannot be validated without a capable inference endpoint. It stays in the design as the upgrade path, but v1 does not implement it and no current claim depends on it.
 3. **Contradiction signal (override):** if the candidate conflicts with a stored fact, surprise is forced high — we *must* store it and trigger reconciliation (§8).
 
 **Decision policy**

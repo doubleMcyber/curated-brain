@@ -25,12 +25,15 @@ Honest snapshot (see [`PROGRESS.md`](PROGRESS.md) for the live, detailed state):
   tier no longer needs spoon-fed facts).
 - Byte-deterministic `snapshot`/`restore`; re-embed-on-model-upgrade migration.
 
-**Verified by tests:** AC-1…AC-9 on a seeded synthetic longitudinal dataset (beats naive-RAG,
-long-context, and no-memory baselines on every category C1–C6), plus a scoped extraction-ON
-vs spoon-fed capability eval. **Read the AC-9 result for what it is:** in that in-repo run,
-Curated Brain alone receives gold `(subject, predicate, object)` triples via `metadata.fact`
-while the baselines ingest raw text, and the scorer is a closed-set reader over the dataset's
-own vocabulary — it validates the *architecture wiring*, not open-domain superiority.
+**Verified by tests:** AC-1…AC-9 on a seeded synthetic longitudinal dataset — **in both
+configurations**: the original wiring check (gold triples supplied via `metadata.fact`) *and*
+the honest one, where Curated Brain ingests the **same raw text as every baseline** and derives
+facts itself with the deterministic extractor (`run_harness(extraction=True)`,
+`tests/test_extraction_default.py`). Extraction-ON scores match spoon-fed
+(C1–C6 = 1.0/1.0/0.99/0.91/1.0/1.0) and strictly beat naive-RAG, long-context, and no-memory on
+every category. Caveats that remain: the scorer is a closed-set reader over the dataset's own
+vocabulary, and the corpus phrasing is template-generated — this validates the architecture on
+in-distribution text, not open-domain superiority.
 
 **Preliminary external result** (see Benchmark below): on our own companion diagnostic harness
 (same author as this library — offline and deterministic, but **not** an independent benchmark),
