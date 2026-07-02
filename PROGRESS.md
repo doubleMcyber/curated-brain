@@ -491,6 +491,24 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 3b scale & tenancy (gate 164 passed; harness hash bit-identical
+  673a25c7… — fourth consecutive workstream).** (1) `NamespacedMemory` — hard per-tenant
+  isolation (store-per-namespace: own index/tier/resolver/coreference/echo state; `drop()` =
+  one-call tenant erasure; legacy single-store files upgrade to the `default` namespace).
+  Closes the biggest rival-parity gap (user/agent scoping) with stronger isolation than
+  filter-based scoping. MCP still serves a single namespace — threading a namespace arg
+  through the MCP tools is a follow-up. (2) `CuratedBrain(summarizer=LLM)` — consolidation
+  now actually summarizes merged clusters (PRD §8) when a model is supplied; deterministic
+  default unchanged. (3) ANN filter-pushdown — escalating over-fetch under selective filters
+  (fixes the documented under-recall follow-up from P3); hnswlib duplicate-degenerate graphs
+  now degrade gracefully (shrink k) instead of raising mid-query; `ef` auto-raised when the
+  escalation outgrows it. (4) Track-C load bar MET: 1e5 records — reviewer-measured recall@10
+  **1.000** (bar 0.90) and p95 **2.4 ms** (bar 50 ms), mean 1.9 ms (m=32, ef=400; `CB_SLOW=1`,
+  ~68 s, kept out of the default gate). Reviewer PASS: tenant isolation probed across
+  structured/vector/coreference/echo-guard/resolver-poison axes — nothing crosses; drop()
+  zero-residue; BruteForce path character-identical; shrink path terminates on all-duplicate
+  corpora. Non-blocking: a raising summarizer propagates out of consolidate() (fail-loud,
+  judged acceptable).
 - 2026-07-02 — **Phase 3a production essentials (gate 157 passed; harness hash bit-identical
   673a25c7… for the third consecutive workstream).** (1) `forget()` hard erasure — GDPR path,
   the one documented exception to never-hard-delete: facts incl. superseded history +

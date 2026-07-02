@@ -51,6 +51,23 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Added (Phase-3b scale & tenancy, 2026-07-02)
+- **Namespacing** (`curated_brain.namespace.NamespacedMemory`): hard-isolated per-tenant
+  stores (one CuratedBrain per namespace) — cross-tenant bleed is structurally impossible
+  (own vector index, structured tier, resolver/coreference state, echo guard per tenant);
+  `drop(namespace)` erases a whole tenant in one call. Legacy single-store files load as the
+  `default` namespace.
+- **LLM-driven consolidation** (`CuratedBrain(summarizer=...)`): merged clusters get a real
+  one-sentence model summary instead of the most-reinforced member verbatim (PRD §8
+  "cluster & summarize"); default None keeps consolidation model-free and deterministic.
+- **ANN filter-pushdown**: with an `HnswIndex` tier, selective metadata filters escalate the
+  over-fetch until k survivors are found (or the live set is exhausted) instead of silently
+  under-recalling past a fixed k×8 window; degenerate duplicate-heavy graphs degrade to
+  what is reachable instead of crashing the query.
+- **≥1e5 load test** (`CB_SLOW=1`): 100k records on the `[scale]` backend meet the stated
+  bar — recall@10 ≥ 0.90 vs exact brute force and p95 query latency < 50 ms (config m=32,
+  ef=400; measured locally 2026-07-02).
+
 ### Added (Phase-3a production essentials, 2026-07-02)
 - **Hard erasure** (`CuratedBrain.forget(subject, predicate=None)`) — the GDPR path and the
   one deliberate exception to never-hard-delete: removes the subject's facts (open AND

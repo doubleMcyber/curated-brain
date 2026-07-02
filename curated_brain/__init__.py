@@ -13,7 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from curated_brain.backend import CuratedBrain, MemoryBackend
-from curated_brain.extraction import HeuristicExtractor, LLMExtractor
+from curated_brain.extraction import HeuristicExtractor, LLMExtractor, resolve_first_person
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.models import (
     Citation,
@@ -24,6 +24,7 @@ from curated_brain.models import (
     StoreStats,
     WriteReceipt,
 )
+from curated_brain.namespace import NamespacedMemory
 from curated_brain.protocols import LLM, Embedder
 from curated_brain.providers import (
     OpenAICompatEmbedder,
@@ -41,6 +42,8 @@ __all__ = [
     # core
     "CuratedBrain",
     "MemoryBackend",
+    "NamespacedMemory",
+    "resolve_first_person",
     # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
     "Embedder",
     "LLM",
