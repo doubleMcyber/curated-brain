@@ -27,23 +27,29 @@ Honest snapshot (see [`PROGRESS.md`](PROGRESS.md) for the live, detailed state):
 
 **Verified by tests:** AC-1…AC-9 on a seeded synthetic longitudinal dataset (beats naive-RAG,
 long-context, and no-memory baselines on every category C1–C6), plus a scoped extraction-ON
-vs spoon-fed capability eval.
+vs spoon-fed capability eval. **Read the AC-9 result for what it is:** in that in-repo run,
+Curated Brain alone receives gold `(subject, predicate, object)` triples via `metadata.fact`
+while the baselines ingest raw text, and the scorer is a closed-set reader over the dataset's
+own vocabulary — it validates the *architecture wiring*, not open-domain superiority.
 
-**Preliminary external result** (see Benchmark below): on an independent, fully-offline
-longitudinal-memory harness, Curated Brain is the **strongest backend on precision,
-contradiction-resolution, staleness, cost, and long-range recall** vs strong RAG references
-(naive/semantic/temporal RAG), trailing the best only by **0.04 on overall recall**.
+**Preliminary external result** (see Benchmark below): on our own companion diagnostic harness
+(same author as this library — offline and deterministic, but **not** an independent benchmark),
+Curated Brain is the **strongest backend on precision, contradiction-resolution, staleness, cost,
+and long-range recall** vs the harness's RAG references (naive/semantic/temporal RAG), trailing
+the best only by **0.04 on overall recall** (which, at suite size n≈25, is a single query).
 
 **Not done yet** (tracked in `PROGRESS.md`): the head-to-head against the **named systems
 Mem0 / Letta / Zep** (needs a shared LLM endpoint — *not yet run*; the result above is vs RAG
 references only); production scale (real ANN at 10⁵–10⁶ records); packaging to PyPI;
 framework/MCP integrations. Nothing here claims to beat the named systems until that runs.
 
-## Benchmark (preliminary)
+## Benchmark (preliminary — our own diagnostic suite, not an independent benchmark)
 
-On an independent, **fully-offline & deterministic** longitudinal-memory harness
-([longitudinal-memory-eval-harness](https://github.com/doubleMcyber/longitudinal-memory-eval-harness)),
-Curated Brain vs the harness's contradiction-aware reference `temporal_rag` (standard suite, seed 42):
+On our companion **fully-offline & deterministic** longitudinal-memory harness
+([longitudinal-memory-eval-harness](https://github.com/doubleMcyber/longitudinal-memory-eval-harness)
+— built by the same author; corpus, scoring, and reference backends all share that lineage),
+Curated Brain vs the harness's contradiction-aware reference `temporal_rag` (standard suite, seed 42,
+~25 scored queries — treat per-metric deltas of a few hundredths as within noise):
 
 | metric | Curated Brain | temporal_rag |
 |---|---|---|
@@ -55,16 +61,21 @@ Curated Brain vs the harness's contradiction-aware reference `temporal_rag` (sta
 | cost / query | **lowest of all backends** | — |
 
 Curated Brain wins or ties **every quality metric except overall recall**, where it trails by
-0.04 — entirely one category (`recency_relevance`) that needs definite-NP/ellipsis coreference we
-deliberately did **not** special-case (no benchmark-tuning). It also wins long-range recall (0.83
-vs 0.67) and is the cheapest backend.
+0.04 (= one query) — entirely one category (`recency_relevance`) needing definite-NP/ellipsis
+coreference we did not add. It also wins long-range recall (0.83 vs 0.67) and is the cheapest
+backend. **Tuning disclosure:** the first run lost on recall; we then added three general-purpose
+capabilities (multi-entity routing, relational extraction patterns, recency pronoun coreference)
+and re-ran. Each is defensible as general, but they were accepted under benchmark selection
+pressure — judge accordingly.
 
 **Reproduce it yourself** (offline, ~1–2 min, no GPU/keys): `benchmark/run_offline.sh`.
 
-**Scope:** this is vs strong RAG *references*, plus a preliminary **n=3** win vs **Mem0** run
-offline; it is **not yet** the full named-rival claim (Mem0 / Letta / Zep on the whole suite),
-which needs a shared LLM endpoint. Full table, the Mem0 head-to-head, caveats, and the exact path
-to finish the named-rival run: [`benchmark/README.md`](benchmark/README.md).
+**Scope:** this is vs RAG *references* written by the same author. The offline **Mem0** comparison
+is **n=3 and mixed** — CB led on the initial favorable subset, but a broader partial run showed
+**answer-accuracy ties** on plain recall, and the harness's provenance-based recall/precision
+structurally penalize Mem0's consolidating design (details in
+[`benchmark/README.md`](benchmark/README.md)). The full named-rival claim (Mem0 / Letta / Zep on
+the whole suite) has **not** been run — it needs a capable shared LLM endpoint.
 
 ## Install
 

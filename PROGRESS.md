@@ -4,7 +4,7 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-06-20 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
+Last updated: 2026-07-02 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
 (runs fully offline) — **RAN + IMPROVED 2026-06-19.** After 3 general-capability levers (multi-entity
@@ -454,7 +454,51 @@ box → (4) ANN + structured indexing + stale-scope → (5) LLM consolidation, c
 - Non-blocking note: live *bge embedder* run also needs HF LFS egress (cached LLMs work on CPU; the
   live LLM path + extraction are already verified). Use a cached/hosted embedder where egress works.
 
+## RED-TEAM + IMPROVEMENT PLAN v2 (2026-07-02, user-requested; two adversarial subagent passes)
+
+Two independent red-team reviews (core implementation; eval credibility) produced a severity-ranked
+finding set and a 6-phase plan. **The controlling insight: the project benchmarks the configuration
+that can't work on real data (regex extractor) and ships unbenchmarked the configuration that could
+(LLM extractor).** Top findings, in brief:
+
+- **Eval credibility (most damaging):** the harness is same-author, same-week; "independent /
+  third-party / never saw during development" in the public READMEs was false; PROGRESS documents a
+  lose→lever→win cycle (selection pressure even if each lever is general); provenance-based
+  recall/precision structurally penalize consolidators (Mem0) — internally admitted but the public
+  n=3 table printed the artifact wins anyway; suite is ~25 queries, no CIs (0.04 recall gap = 1
+  query); in-repo AC-9 feeds gold triples to CB only, scored by a closed-set oracle reader.
+- **Implementation (top cut):** token-subset stale filtering false-positives store-wide on common
+  words ("manager", "Nice"); `valid_from`≡`created_at` (retroactive facts unreachable; out-of-order
+  writes create inverted intervals); `|` in a fact value crashes all future `consolidate()`;
+  tokenizer `[a-z0-9]+` makes non-ASCII text unstorable/unretrievable (zero vector); consolidation
+  destroys merged members' content, never calls an LLM, re-adds claims with `entities=[]` (degrades
+  entity-scoped recall); no namespacing (cross-session/user bleed incl. via MCP), no delete/GDPR, no
+  locks; MCP defaults timestamp=0.0 (kills temporal semantics) + full-snapshot write per observation;
+  HnswIndex crashes `snapshot()/save()/stats()`; `k` ignored (hard cap `MAX_CONTEXT_ITEMS=4`);
+  extractor predicates (`location`/`employer`) don't match planner/dataset vocab (`city`/`role`) so
+  extracted updates don't supersede; surprise gate = lexical novelty (paraphrased updates fall in a
+  discard dead-zone; logprob estimator never built); restore doesn't reconstruct resolver ambiguity
+  history (determinism violation across restart).
+
+**Plan (sequenced):** Phase 0 credibility triage of public docs (✅ DONE 2026-07-02 — see changelog);
+Phase 1 make LLM extraction the benchmarked default (unify predicate schemas, first-person
+extraction, re-run suite with `metadata.fact` withheld, implement-or-retire logprob surprise);
+Phase 2 correctness fixes (provenance-linked stale filter, tuple fact keys, decouple valid_from,
+unicode tokens, resolver-state in snapshot, MCP lock/timestamps, honor `k`); Phase 3 product
+essentials (namespacing, delete/retract, inverse queries, persistent ANN + snapshot, real LLM
+consolidation); Phase 4 credible external eval (LongMemEval frozen-config vs rivals at recommended
+configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition around what CB uniquely
+owns (deterministic, auditable, offline, bi-temporal + provenance).
+
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 0 credibility triage (docs-only).** Red-team v2 recorded (section above).
+  Public claims corrected: README + benchmark/README no longer say "independent / third-party /
+  never saw during development" (harness relabeled same-author diagnostic suite); AC-9 spoon-feeding
+  disclosed next to the claim; suite size (~25 queries, 0.04 = 1 query) stated; tuning disclosure
+  (lose→3 levers→win) added; Mem0 n=3 table now carries the corrections block (CB-favorable subset,
+  broader-run answer ties, provenance artifact NOT claimed as CB wins, handicapped rival); stale
+  "Zep needs Docker" claim fixed (Graphiti+Kuzu adapter exists); external-benchmark + frozen-config
+  requirement added to the named-rival path. No code changed.
 - 2026-06-18 — Created. Recorded Stage 1–7 done, the proof→contender gap, locked decisions, and the 9-workstream roadmap.
 - 2026-06-18 — Track A foundation: real `providers.py` (bge/e5 + Transformers LLM) + `cassette.py`
   reproducibility layer + `test_providers.py` + `[local]` extra. Gate 55 passed/2 skipped, ruff
