@@ -44,6 +44,17 @@ FREE_DEDUP_THRESHOLD = 0.85  # only genuine near-duplicate free-text episodes ar
 SNAPSHOT_VERSION = 1
 
 
+def _fact_key_parts(rec: EpisodicRecord) -> list[str]:
+    """The (subject, predicate, object) parts of an episode's fact link. New records store a
+    3-item list; legacy snapshots stored "subject|predicate|object", which crashed
+    ``consolidate()`` whenever a value contained "|" — split capped at 2 so legacy keys with
+    pipes in the OBJECT (the caller-supplied value, the realistic case) parse correctly."""
+    if isinstance(rec.fact_key, list):
+        return rec.fact_key
+    assert rec.fact_key is not None
+    return rec.fact_key.split("|", 2)
+
+
 def _validate_fact(fact) -> None:
     """Reject a malformed caller-supplied fact at the boundary (fail-loud, clear message)
     rather than letting it crash deep in routing or silently corrupt the structured tier."""
@@ -52,6 +63,10 @@ def _validate_fact(fact) -> None:
     for key in ("subject", "predicate", "object"):
         if not isinstance(fact.get(key), str) or not fact[key]:
             raise ValueError(f"metadata fact needs a non-empty str '{key}': {fact!r}")
+    vf = fact.get("valid_from")
+    if vf is not None and (not isinstance(vf, (int, float)) or isinstance(vf, bool)
+                           or not math.isfinite(vf)):
+        raise ValueError(f"metadata fact 'valid_from' must be a finite number: {vf!r}")
 
 
 class MemoryBackend(abc.ABC):
@@ -101,11 +116,17 @@ class CuratedBrain(MemoryBackend):
 
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
-                 extractor=None) -> None:
+                 extractor=None, max_context_items: int | None = None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
         self._gate_cfg = (gate or SurpriseGate()).to_dict()
+        # Context budget per query. The default (MAX_CONTEXT_ITEMS=4) keeps payloads tiny
+        # (PRD §7) but silently overrode the caller's k — now configurable so an adopter
+        # asking for more context actually gets it.
+        self._max_ctx = max_context_items if max_context_items is not None else MAX_CONTEXT_ITEMS
+        if self._max_ctx < 1:
+            raise ValueError(f"max_context_items must be >= 1, got {max_context_items!r}")
         # Optional Track-B extractor: when set, facts are derived from raw text for
         # observations that arrive without a pre-extracted `metadata.fact`. Default None
         # preserves the spoon-fed-fact behavior (and AC-1 determinism) exactly.
@@ -167,8 +188,8 @@ class CuratedBrain(MemoryBackend):
                 surprise=surprise,
                 provenance={"source": "write", "session_id": session_id},
                 last_seen_ts=timestamp,
-                fact_key=(f"{normalize(fact['subject'])}|{normalize(fact['predicate'])}"
-                          f"|{normalize(fact['object'])}") if fact else None,
+                fact_key=[normalize(fact["subject"]), normalize(fact["predicate"]),
+                          normalize(fact["object"])] if fact else None,
             )
             self._episodes.append(rec)
             self._ep_by_id[rec.id] = rec
@@ -214,10 +235,13 @@ class CuratedBrain(MemoryBackend):
         never duplicates rows but guarantees salient facts are never lost to the gate."""
         if not fact:
             return
+        # Retroactive facts: a caller may state WHEN the fact became true in the world
+        # (fact["valid_from"]) separately from when it was recorded (`timestamp`) — the
+        # bi-temporal distinction (PRD §5.2). Default: valid time == transaction time.
         self.structured.assert_fact(
             fact_id=self._next_id("fact"),
             subject=fact["subject"], predicate=fact["predicate"], object=fact["object"],
-            valid_from=timestamp, created_at=timestamp,
+            valid_from=fact.get("valid_from", timestamp), created_at=timestamp,
             provenance={"episode_id": episode_id, "session_id": session_id,
                         "wall_ts": timestamp},
         )
@@ -287,7 +311,7 @@ class CuratedBrain(MemoryBackend):
             # for EVERY known entity named in the question (round-robin so a multi-entity
             # question surfaces each), reserving budget for vector recall. This is the main
             # reason a hybrid store loses to plain RAG on open benchmarks.
-            budget = MAX_CONTEXT_ITEMS - 1  # keep >=1 slot for the vector hits below
+            budget = max(1, self._max_ctx - 1)  # keep >=1 slot for the vector hits below
             qtoks = set(tokenize(question, drop_stop=False))
             # Canonicalize matched tokens and dedupe (so "erin" and "smith" -> one "erin smith").
             mentioned = sorted({self._resolver.canonical(e)
@@ -307,8 +331,9 @@ class CuratedBrain(MemoryBackend):
                     break
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=cent)
-        for it in fuse(vhits, now=timestamp, stale_token_sets=self._stale_token_sets()):
-            if len(lines) >= MAX_CONTEXT_ITEMS:
+        stale_rids, stale_pairs = self._stale_filters()
+        for it in fuse(vhits, now=timestamp, stale_rids=stale_rids, stale_pairs=stale_pairs):
+            if len(lines) >= self._max_ctx:
                 break
             lines.append(it.text)
             citations.append(Citation(record_id=it.rid, provenance=it.provenance,
@@ -322,24 +347,42 @@ class CuratedBrain(MemoryBackend):
         self._cost["context_tokens_served"] += tokens_in
         return Retrieval(context=context, citations=citations, tokens_in=tokens_in)
 
-    def _stale_token_sets(self) -> list[frozenset[str]]:
-        """Token sets of superseded object values to filter out of fused vector context: values
-        that have been closed in valid time and are **not currently true for any entity**.
+    def _stale_filters(self) -> tuple[set[str], list[tuple[frozenset[str], frozenset[str]]]]:
+        """Supersede-filtering inputs for :func:`fuse` — provenance-linked first, entity-scoped
+        token match as the free-text fallback.
 
-        Returns one token set per stale value (not a flat token set), so a record is dropped
-        only when it contains **all** tokens of a stale value — this catches MULTI-WORD stale
-        values ("14 Rua das Flores, Lisbon") that the old single-token intersection missed,
-        without dropping a record that merely shares one common word with a stale value.
-        Subtracting open values keeps a value that is presently true somewhere (A→B→A, or
-        current for one entity while stale for another) from ever being filtered."""
-        open_vals = {normalize(f.object) for f in self.structured.facts if f.is_open}
-        out: list[frozenset[str]] = []
+        Returns ``(stale_rids, stale_pairs)``:
+
+        * ``stale_rids`` — episode ids whose asserted triple (``fact_key``) is now superseded
+          (its object differs from the key's current value). Exact identity — a record that
+          *asserted* a stale fact is dropped, one that merely mentions similar words is not.
+        * ``stale_pairs`` — ``(subject_tokens, value_tokens)`` per superseded value, for
+          records with NO fact link: dropped only when the text contains the subject AND the
+          full stale value. The old filter matched value tokens alone, store-wide — once any
+          role "manager" was superseded, every record containing the word "manager"
+          ("Erin's manager is Bob") was silently filtered forever.
+
+        Staleness is judged PER (subject, predicate) key: a value can be stale for Alice while
+        current for Bob (the old global open-values subtraction hid Alice's stale record)."""
+        current_obj = {(normalize(f.subject), normalize(f.predicate)): normalize(f.object)
+                       for f in self.structured.open_facts}
+        stale_keys: set[tuple[str, str, str]] = set()
+        stale_pairs: list[tuple[frozenset[str], frozenset[str]]] = []
+        seen_pairs: set[tuple[frozenset[str], frozenset[str]]] = set()
         for f in self.structured.facts:
-            if not f.is_open and normalize(f.object) not in open_vals:
-                toks = frozenset(tokenize(f.object))
-                if toks:
-                    out.append(toks)
-        return out
+            if f.is_open:
+                continue
+            ns, np_, no = normalize(f.subject), normalize(f.predicate), normalize(f.object)
+            if current_obj.get((ns, np_)) == no:
+                continue  # value is (again) current for this key — not stale
+            stale_keys.add((ns, np_, no))
+            pair = (frozenset(tokenize(f.subject)), frozenset(tokenize(f.object)))
+            if pair[1] and pair not in seen_pairs:
+                seen_pairs.add(pair)
+                stale_pairs.append(pair)
+        stale_rids = {r.id for r in self._episodes
+                      if r.fact_key is not None and tuple(_fact_key_parts(r)) in stale_keys}
+        return stale_rids, stale_pairs
 
     # ------------------------------------------------------------------ maintenance --
     def reembed(self, new_embedder) -> dict:
@@ -371,7 +414,7 @@ class CuratedBrain(MemoryBackend):
         free: list[EpisodicRecord] = []
         for r in self._episodes:
             if r.fact_key:
-                subj, pred, _ = r.fact_key.split("|")
+                subj, pred, _ = _fact_key_parts(r)
                 groups.setdefault((subj, pred), []).append(r)
             else:
                 free.append(r)
@@ -382,7 +425,7 @@ class CuratedBrain(MemoryBackend):
         for (subj, pred), members in groups.items():
             cur = current_obj.get((subj, pred))
             current_eps = [r for r in members
-                           if r.fact_key and r.fact_key.split("|")[2] == cur]
+                           if r.fact_key and _fact_key_parts(r)[2] == cur]
             for r in members:  # outdated raw episodes are compacted away
                 if r not in current_eps:
                     self.vector.remove_by_rid(r.id)
@@ -416,6 +459,10 @@ class CuratedBrain(MemoryBackend):
         rep = representative(members)
         for r in members:
             self.vector.remove_by_rid(r.id)
+        # Propagate the members' subjects to the claim so entity-filtered vector search can
+        # still find it (previously entities=[] made every merged claim invisible to
+        # entity-scoped recall — consolidation silently degraded the store it was compacting).
+        entities = sorted({_fact_key_parts(r)[0] for r in members if r.fact_key})
         claim = EpisodicRecord(
             id=self._next_id("claim"), session_id=rep.session_id, seq=len(self._episodes),
             wall_ts=rep.wall_ts, actor="system", content=rep.content,
@@ -424,9 +471,10 @@ class CuratedBrain(MemoryBackend):
             support_count=sum(r.support_count for r in members),
             last_seen_ts=max(r.last_seen_ts for r in members),
             tier="semantic", supports=[r.id for r in members],
+            fact_key=rep.fact_key,  # keep the fact link so a LATER supersede still filters it
         )
         self.vector.add(rid=claim.id, text=claim.content, wall_ts=claim.wall_ts,
-                        session_id=claim.session_id, tier="semantic", entities=[])
+                        session_id=claim.session_id, tier="semantic", entities=entities)
         return claim
 
     def stats(self) -> StoreStats:
@@ -516,6 +564,10 @@ class CuratedBrain(MemoryBackend):
             # ALL writes (incl. discarded), so it cannot be faithfully rebuilt from the stored
             # episodes alone — persist it or restore() silently shifts C6 answers.
             "session_ts": sorted(self._session_ts.items()),
+            # Resolver ambiguity history (poisoned tokens, singletons) is likewise not
+            # derivable from the final canonical subjects — persist it or a token refused
+            # before snapshot can promote after restore (same query, different answer).
+            "resolver": self._resolver.to_dict(),
         }
 
     def snapshot(self) -> bytes:
@@ -525,6 +577,13 @@ class CuratedBrain(MemoryBackend):
 
     def restore(self, blob: bytes) -> None:
         state = from_jsonable(json.loads(blob.decode("utf-8")))
+        snap_dim = state.get("config", {}).get("dim")
+        if snap_dim is not None and snap_dim != self.embedder.dim:
+            # A dim mismatch used to surface only later, as a shape error mid-query (or,
+            # worse, silently wrong similarities if the dims happened to agree elsewhere).
+            raise ValueError(f"snapshot embedding dim {snap_dim} != live embedder dim "
+                             f"{self.embedder.dim}; restore with the matching embedder, "
+                             f"then migrate via reembed()")
         self._counter = state["counter"]
         self._episodes = [EpisodicRecord(**d) for d in state["episodic"]]
         self._ep_by_id = {r.id: r for r in self._episodes}
@@ -534,11 +593,14 @@ class CuratedBrain(MemoryBackend):
         if state.get("vector"):
             self.vector.load(state["vector"])
         self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()
-        # Rebuild derived planner state from the restored stores. Stored subjects are already
-        # canonical, so register them faithfully (single-token -> standalone, multi -> full).
-        self._resolver = EntityResolver()
-        for f in self.structured.facts:
-            self._resolver.register_canonical(f.subject)
+        if state.get("resolver"):  # faithful restore incl. ambiguity/singleton history
+            self._resolver = EntityResolver.from_dict(state["resolver"])
+        else:
+            # Legacy snapshot: rebuild from stored subjects (lossy — cannot recover which
+            # tokens were poisoned as ambiguous by non-fact registrations).
+            self._resolver = EntityResolver()
+            for f in self.structured.facts:
+                self._resolver.register_canonical(f.subject)
         if "session_ts" in state:  # faithful restore of the as-of-by-session map
             self._session_ts = {int(k): v for k, v in state["session_ts"]}
         else:  # legacy snapshot: rebuild from stored episodes (lossy for discarded sessions)

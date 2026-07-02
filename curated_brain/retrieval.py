@@ -108,16 +108,24 @@ def _recency(now: float, ts: float) -> float:
     return 0.5 ** (max(0.0, now - ts) / HALF_LIFE_SECONDS)
 
 
-def fuse(vhits, *, now: float, stale_token_sets: list[frozenset[str]], w_rel: float = 1.0,
+def fuse(vhits, *, now: float, stale_rids: set[str] = frozenset(),
+         stale_pairs: list[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
          w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
     """Rank vector candidates by relevance × recency × importance, dropping any record that
-    states a superseded value (supersede-filtering, PRD §7 step 3). A record is stale when it
-    contains **all** tokens of some superseded value — so multi-word stale values are caught.
+    states a superseded value (supersede-filtering, PRD §7 step 3).
+
+    Two-level staleness (see ``CuratedBrain._stale_filters``): ``stale_rids`` drops records
+    whose *asserted fact* is superseded (exact, provenance-linked); ``stale_pairs`` is the
+    fallback for records with no fact link — dropped only when the text contains BOTH the
+    subject and the full stale value (entity-scoped, so a record merely sharing words with
+    some other entity's stale value is never filtered).
     The ``sim`` carried in from :meth:`VectorTier.search` is already the hybrid score."""
     items: list[FusedItem] = []
     for r, sim in vhits:
+        if r.rid in stale_rids:
+            continue
         rtoks = set(tokenize(r.text))
-        if any(ts <= rtoks for ts in stale_token_sets):
+        if any(st <= rtoks and vt <= rtoks for st, vt in stale_pairs):
             continue
         score = w_rel * sim + w_rec * _recency(now, r.wall_ts) + w_imp * importance
         items.append(FusedItem(text=r.text, rid=r.rid, provenance={"session_id": r.session_id},

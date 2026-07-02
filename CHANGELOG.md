@@ -44,17 +44,32 @@ the project is pre-1.0, so the API may still change.
   facts (the store grows with distinct facts, not observations), with full recall after
   consolidation and a byte-identical snapshot round-trip at scale.
 - Complete top-level public API in `curated_brain/__init__` (imports stay lazy).
-- **Benchmarks** on an independent offline harness, now **reproducible from a clean checkout**
-  via `benchmark/run_offline.sh` (+ `benchmark/README.md`): CB wins precision +
-  contradiction-resolution + staleness vs strong RAG references and (preliminary, n=3, small
-  local model) vs **Mem0**; competitive on recall. Not yet the full named-rival claim — the doc
-  states the exact endpoint/throughput needed to finish it.
+- **Benchmarks** on our companion offline diagnostic harness (same-author — not an independent
+  benchmark; see `benchmark/README.md` for the full provenance and tuning disclosures), now
+  **reproducible from a clean checkout** via `benchmark/run_offline.sh`: CB leads precision +
+  contradiction-resolution + staleness vs the harness's RAG references; the offline Mem0
+  comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
+  Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
 ### Fixed
 - **Silent bi-temporal corruption:** a non-finite timestamp created an "open" fact invisible
   to as-of queries — now rejected with a clear error at the write boundary.
 - **Restore fidelity:** the session→timestamp map driving as-of-by-session (C6) queries was not
   persisted and was rebuilt lossily on restore, silently shifting answers — now persisted.
+- **(Phase-2 correctness pass)** `consolidate()` no longer crashes on fact values containing
+  `"|"` (fact links stored structured; legacy snapshots still load). Bi-temporality is real:
+  `metadata.fact["valid_from"]` records retroactive facts, and an out-of-order older assertion
+  becomes closed history instead of inverting the open fact's interval. Non-Latin text is
+  storable/retrievable (unicode tokenizer + NFKC/casefold; previously zero-vector — ASCII
+  unchanged). Supersede-filtering is provenance-linked + entity-scoped per (subject, predicate)
+  — superseding one entity's value no longer filters store-wide records sharing its words
+  (tradeoff: a stale free-text record with neither fact link nor subject name is no longer
+  caught). Snapshots persist the resolver's ambiguity history; `restore()` rejects
+  dim-mismatched snapshots. MCP: lock-serialized ops, wall-clock default timestamps (was 0.0 —
+  silently disabled temporal semantics), atomic batched persistence. Consolidated claims keep
+  entity tags + fact link (visible to entity-filtered search and later supersedes). New
+  `CuratedBrain(max_context_items=)` knob so callers asking for more context get it (default 4
+  unchanged).
 
 ## [0.1.0]
 

@@ -12,12 +12,11 @@ Run it:  ``curated-brain-mcp``  (stdio transport; set ``CB_MCP_PATH`` to persist
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 from curated_brain.backend import CuratedBrain
 from curated_brain.extraction import HeuristicExtractor
-
-# Far-future default query time: with no explicit clock, "now" sees everything written.
-_NOW = 1e12
 
 
 class MemoryService:
@@ -25,40 +24,68 @@ class MemoryService:
 
     Defaults to the deterministic no-LLM :class:`HeuristicExtractor` so raw text sent by an
     agent populates the structured tier with no spoon-fed facts. Pass ``path`` to persist the
-    store to disk after each mutating call (durable across server restarts)."""
+    store to disk (atomic tmp+rename; ``persist_every`` batches writes to amortize the
+    O(store) snapshot cost — the store is also flushed on ``consolidate``).
 
-    def __init__(self, cb: CuratedBrain | None = None, *, path: str | None = None) -> None:
+    Timestamps: the core is clock-free by contract (the harness supplies time), but a live
+    agent host has no harness — so THIS boundary defaults to wall-clock. The old defaults
+    (write at t=0.0) stamped every fact at the epoch, silently disabling recency scoring,
+    supersede ordering, and all as-of semantics for the flagship integration.
+
+    Thread safety: a single lock serializes all operations — CuratedBrain has no internal
+    locking, and MCP hosts may issue concurrent tool calls."""
+
+    def __init__(self, cb: CuratedBrain | None = None, *, path: str | None = None,
+                 persist_every: int = 1) -> None:
         self.cb = cb or CuratedBrain(seed=0, extractor=HeuristicExtractor())
         self._path = path
+        self._persist_every = max(1, persist_every)
+        self._dirty = 0
+        self._lock = threading.Lock()
 
     def write(self, observation: str, session_id: str = "default",
-              timestamp: float = 0.0) -> dict:
-        r = self.cb.write(observation, session_id=session_id, timestamp=timestamp)
-        self._persist()
-        return {"stored": r.stored, "reason": r.reason, "record_id": r.record_id}
+              timestamp: float | None = None) -> dict:
+        with self._lock:
+            ts = time.time() if timestamp is None else timestamp
+            r = self.cb.write(observation, session_id=session_id, timestamp=ts)
+            self._dirty += 1
+            if self._dirty >= self._persist_every:
+                self._persist()
+            return {"stored": r.stored, "reason": r.reason, "record_id": r.record_id}
 
     def query(self, question: str, session_id: str = "default",
-              timestamp: float = _NOW, k: int = 8) -> str:
-        return self.cb.query(question, session_id=session_id, timestamp=timestamp, k=k).context
+              timestamp: float | None = None, k: int = 8) -> str:
+        with self._lock:
+            ts = time.time() if timestamp is None else timestamp
+            return self.cb.query(question, session_id=session_id, timestamp=ts, k=k).context
 
     def answer(self, subject: str, predicate: str) -> str:
         """Exact structured answer for (subject, predicate), or "" if unknown."""
-        return self.cb.answer_structured(subject, predicate)
+        with self._lock:
+            return self.cb.answer_structured(subject, predicate)
 
     def consolidate(self) -> dict:
-        rep = self.cb.consolidate()
-        self._persist()
-        return {"episodes_in": rep.episodes_in, "claims_out": rep.claims_out,
-                "pruned": rep.pruned}
+        with self._lock:
+            rep = self.cb.consolidate()
+            self._persist()
+            return {"episodes_in": rep.episodes_in, "claims_out": rep.claims_out,
+                    "pruned": rep.pruned}
 
     def stats(self) -> dict:
-        s = self.cb.stats()
-        return {"episodic": s.episodic_count, "structured": s.structured_count,
-                "semantic": s.semantic_count, "bytes": s.bytes}
+        with self._lock:
+            s = self.cb.stats()
+            return {"episodic": s.episodic_count, "structured": s.structured_count,
+                    "semantic": s.semantic_count, "bytes": s.bytes}
 
     def _persist(self) -> None:
-        if self._path:
-            self.cb.save(self._path)
+        """Atomic durable save (tmp + rename): a crash mid-write can no longer truncate the
+        store file. Callers hold the lock."""
+        if not self._path:
+            return
+        tmp = f"{self._path}.tmp"
+        self.cb.save(tmp)
+        os.replace(tmp, self._path)
+        self._dirty = 0
 
 
 def build_server(service: MemoryService | None = None, *, name: str = "curated-brain"):
@@ -72,13 +99,15 @@ def build_server(service: MemoryService | None = None, *, name: str = "curated-b
     mcp = FastMCP(name)
 
     @mcp.tool(description="Store an observation in memory; a surprise gate decides whether to "
-                          "keep it, and facts are extracted from the raw text.")
-    def write(observation: str, session_id: str = "default", timestamp: float = 0.0) -> dict:
+                          "keep it, and facts are extracted from the raw text. timestamp "
+                          "defaults to the current time.")
+    def write(observation: str, session_id: str = "default",
+              timestamp: float | None = None) -> dict:
         return svc.write(observation, session_id, timestamp)
 
     @mcp.tool(description="Retrieve a small, curated context to answer a question (stale "
-                          "values are supersede-filtered).")
-    def query(question: str, session_id: str = "default", timestamp: float = _NOW,
+                          "values are supersede-filtered). timestamp defaults to now.")
+    def query(question: str, session_id: str = "default", timestamp: float | None = None,
               k: int = 8) -> str:
         return svc.query(question, session_id, timestamp, k)
 

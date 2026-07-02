@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+# Word tokens in ANY script (underscore excluded so ASCII behavior is unchanged). The old
+# pattern was [a-z0-9]+, which silently reduced non-Latin text to ZERO tokens — every such
+# observation embedded to the zero vector (stored with novelty 1.0, retrievable never).
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 # A tiny stop-word set: dropping these sharpens lexical/embedding discrimination without
 # pulling in a dependency. Intentionally small to stay predictable.
@@ -20,8 +24,11 @@ _STOP = frozenset(
 
 
 def tokenize(text: str, *, drop_stop: bool = True) -> list[str]:
-    """Lowercase alphanumeric tokens; optionally drop common stop-words."""
-    toks = _TOKEN_RE.findall(text.lower())
+    """Casefolded word tokens (any script); optionally drop common stop-words.
+
+    ``casefold`` == ``lower`` on ASCII, so English behavior is byte-identical to the old
+    tokenizer; non-Latin scripts now produce real tokens instead of vanishing."""
+    toks = _TOKEN_RE.findall(text.casefold())
     if drop_stop:
         toks = [t for t in toks if t not in _STOP]
     return toks
@@ -34,7 +41,7 @@ def stable_hash(s: str) -> int:
 
 def count_tokens(text: str) -> int:
     """Cheap token count used for retrieval-cost accounting (`tokens_in`)."""
-    return len(_TOKEN_RE.findall(text.lower()))
+    return len(_TOKEN_RE.findall(text.casefold()))
 
 
 def jaccard(a: str, b: str) -> float:
@@ -46,8 +53,11 @@ def jaccard(a: str, b: str) -> float:
 
 
 def normalize(s: str) -> str:
-    """Canonical form for entity/value matching (PRD §5.1 entity resolution)."""
-    return s.strip().lower()
+    """Canonical form for entity/value matching (PRD §5.1 entity resolution).
+
+    NFKC + casefold so visually-identical unicode surfaces ("café" in NFC vs NFD, ligatures,
+    fullwidth digits) normalize to one key. Identity on ASCII (AC-1/AC-9 unchanged)."""
+    return unicodedata.normalize("NFKC", s.strip()).casefold()
 
 
 # --- JSON sanitization for non-finite floats --------------------------------------
