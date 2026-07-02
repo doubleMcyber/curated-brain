@@ -1,29 +1,54 @@
 # The Curated Brain
 
-A persistent, self-organizing **memory layer for LLM agents**, built entirely on
-**frozen-model APIs** — no training, no fine-tuning. All the intelligence is in how a frozen
-embedder + chat model are *orchestrated*.
+A persistent, self-organizing **memory layer for LLM agents** — **the memory you can replay
+and audit**. Built entirely on **frozen-model APIs** (no training, no fine-tuning): all the
+intelligence is in how a frozen embedder + chat model are *orchestrated*.
 
 > **Thesis:** memory is a **curation** problem, not a search problem. RAG fails at *write*
 > time, not query time — log everything and retrieval drowns in noise. The Curated Brain
 > invests at write time: it decides *what to keep*, imposes *structure*, and *continuously
 > reconciles* old and new facts, so it gets **more useful the longer it runs**, not more bloated.
 
+**What it uniquely owns** (properties you can verify today, not benchmark claims):
+
+- **Deterministic & replayable** — identical input + seed ⇒ byte-identical store and answers;
+  `snapshot()`/`restore()` round-trip exactly. Debug a memory bug by replaying it.
+- **Bi-temporal with full provenance** — every fact carries valid time *and* transaction time
+  plus its source; updates supersede without destroying history, so "what did we believe on
+  date D?" is a first-class query and every answer is auditable back to its source turn.
+- **Offline-capable** — the whole layer (and its test gate) runs with zero network, zero keys,
+  zero GPUs; real models plug in behind the same protocols when you have them.
+- **Hard tenant isolation & real erasure** — one store per namespace (`NamespacedMemory`;
+  cross-tenant bleed is structurally impossible) and `forget()` erases an entity with zero
+  residue in the snapshot bytes (the GDPR path), verified by test.
+
+If you need a managed cloud service, a mature ecosystem, or LLM-native extraction quality at
+scale today, Mem0 / Letta / Zep are more established; the head-to-head against them has **not**
+been run (see Status).
+
 ## Status
 
 Honest snapshot (see [`PROGRESS.md`](PROGRESS.md) for the live, detailed state):
 
 **Working and tested** (`pytest -q` green, `ruff` clean, fully deterministic):
-- Two-tier store: a **bi-temporal structured tier** (valid + transaction time, non-lossy
-  supersede, multi-hop and as-of-time queries) and a **vector tier** (cosine ANN, metadata filters).
-- **Surprise-gated writes** (semantic novelty + contradiction override + adaptive threshold).
-- **Hybrid retrieval** (planner → fuse by relevance × recency × importance → supersede-filter).
-- **Self-organizing consolidation** (dedupe, prune, resolve contradictions, retain provenance).
+- Two-tier store: a **bi-temporal structured tier** (valid + transaction time, retroactive
+  facts, non-lossy supersede, multi-hop / as-of-time / **inverse set queries** — "who lives
+  in Berlin?") and a **vector tier** (cosine ANN, metadata filters with pushdown).
+- **Surprise-gated writes** (semantic novelty + contradiction override + adaptive threshold),
+  with **echo suppression** — a verbatim restatement reinforces instead of resurrecting a
+  superseded value.
+- **Hybrid retrieval** (planner → fuse by relevance × recency × importance → supersede-filter,
+  provenance-linked and entity-scoped).
+- **Self-organizing consolidation** (dedupe, prune, resolve contradictions, retain provenance;
+  plug in an LLM `summarizer=` for real cluster summaries).
+- **Raw-text fact extraction** — third-person *and* first-person ("My email is …" with a
+  declared speaker), unicode-safe, with an anti-hallucination groundedness guard. The
+  structured tier needs no spoon-fed facts.
+- **Multi-tenant namespacing** (`NamespacedMemory`) and **hard erasure** (`forget()`, GDPR path).
 - **Real local models** behind the protocols: `bge`/`e5` embeddings and a 🤗 Transformers chat
   model — with the deterministic fakes retained as test doubles so CI needs no model stack.
-- **Raw-text fact extraction** with an anti-hallucination groundedness guard (the structured
-  tier no longer needs spoon-fed facts).
-- Byte-deterministic `snapshot`/`restore`; re-embed-on-model-upgrade migration.
+- Byte-deterministic `snapshot`/`restore`; re-embed-on-model-upgrade migration; **1e5-record
+  load bar met** on the `[scale]` ANN backend (recall@10 1.00, p95 2.4 ms; `CB_SLOW=1`).
 
 **Verified by tests:** AC-1…AC-9 on a seeded synthetic longitudinal dataset — **in both
 configurations**: the original wiring check (gold triples supplied via `metadata.fact`) *and*
