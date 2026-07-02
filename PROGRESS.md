@@ -4,7 +4,8 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-02 · Branch: `claude/heuristic-extractor` (off `claude/open-domain-backstop`)
+Last updated: 2026-07-02 (red-team improvement plan: all local phases 0/1/2/3a/3b/5 DONE,
+6 reviewed commits; Phase 4 endpoint-bound) · Branch: `claude/heuristic-extractor`
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
 (runs fully offline) — **RAN + IMPROVED 2026-06-19.** After 3 general-capability levers (multi-entity
@@ -491,6 +492,21 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 5 repositioning (docs; reviewer PASS) — improvement-plan complete on
+  the local axis.** README now leads with the four properties CB verifiably owns
+  (deterministic/replayable, bi-temporal + provenance, offline-capable, hard isolation +
+  zero-residue erasure — reviewer verified every claim against code/tests) and explicitly
+  concedes the rivals are more established / the head-to-head has not run. Feature list
+  refreshed. Bonus reviewer catch fixed: `TransformersLLM.complete` imported torch before the
+  guarded extras error (clean env got ImportError instead of the actionable message).
+  **SESSION SUMMARY (6 reviewed commits):** Phase 0 credibility triage `168ea01` → Phase 2
+  correctness `7398003` → Phase 1 extraction-default `3880c2d` → Phase 3a essentials
+  `d06a54c` → Phase 3b scale & tenancy `fa77425` → Phase 5 repositioning `92f6c1e`. Gate
+  124→164 passed; external harness bit-identical (673a25c7…) through every code change.
+  **Remaining:** MCP namespace arg (small follow-up); definite-NP coreference; Phase 4
+  credible external eval — STILL ENDPOINT-BOUND (needs a capable hosted OpenAI-compatible
+  endpoint; adapters pre-wired, protocol written in benchmark/README.md §Scope); PyPI upload
+  (needs maintainer token).
 - 2026-07-02 — **Phase 3b scale & tenancy (gate 164 passed; harness hash bit-identical
   673a25c7… — fourth consecutive workstream).** (1) `NamespacedMemory` — hard per-tenant
   isolation (store-per-namespace: own index/tier/resolver/coreference/echo state; `drop()` =
