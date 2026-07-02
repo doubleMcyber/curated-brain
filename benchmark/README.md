@@ -1,9 +1,18 @@
-# Benchmark — Curated Brain on an independent longitudinal-memory harness
+# Benchmark — Curated Brain on our companion longitudinal-memory harness
 
-Curated Brain is evaluated on a **third-party, fully-offline, deterministic** harness it never
-saw during development: [longitudinal-memory-eval-harness](https://github.com/doubleMcyber/longitudinal-memory-eval-harness).
+Curated Brain is evaluated on a **fully-offline, deterministic** harness:
+[longitudinal-memory-eval-harness](https://github.com/doubleMcyber/longitudinal-memory-eval-harness).
+
+**Provenance disclosure (read first):** the harness is **same-author** — its corpus generators,
+scoring, and reference backends were written in the same ecosystem as this library, and the
+capability work below was iterated against it. It is a *diagnostic suite*, **not** an independent
+third-party benchmark; nothing here substitutes for an externally-authored eval (LongMemEval /
+LoCoMo) run on a frozen configuration.
+
 Scoring is provenance-based (each retrieved item is resolved to a gold fact by its
-`(source_session, source_turn)`), so a backend cannot game the metric by phrasing.
+`(source_session, source_turn)`). That makes it robust to phrasing tricks, but it **structurally
+favors designs that preserve raw turns** (like Curated Brain) and penalizes designs that rewrite
+facts and lose turn provenance (like Mem0) — see the caveats on the Mem0 table below.
 
 ## Reproduce (offline, ~1–2 min, no GPU / network / keys)
 
@@ -19,7 +28,7 @@ no-model normalizing judge ship in the harness, so the run is byte-deterministic
 emits a `determinism_hash`). The harness is pinned to a reviewed commit. Network is used only on
 first run (to clone the harness + pip-install numpy); the evaluation itself needs none.
 
-## Result — vs the shipped references (standard suite, seed 42, k=10)
+## Result — vs the shipped references (standard suite, seed 42, k=10; ~25 scored queries)
 
 | metric | **curated_brain** | temporal_rag | semantic_rag | naive_rag | long_context | no_memory |
 |---|---|---|---|---|---|---|
@@ -31,19 +40,27 @@ first run (to clone the harness + pip-install numpy); the evaluation itself need
 | cost_per_query_usd *(modeled)* | **~0.0000** | 0.0001 | 0.0001 | 0.0001 | 0.0004 | 0.00 |
 
 Curated Brain wins or ties **every quality axis except aggregate recall**, where it trails
-`temporal_rag` by 0.04 — entirely the `recency_relevance` category (0.50 vs 1.00). That category's
-update turn (*"… briefly noted the project changed to July"*) needs definite-NP + ellipsis
-coreference; closing it generally also requires original-vs-current intent detection, and a
-phrasing-specific regex would be benchmark-tuning — so we **deliberately did not special-case it**.
-Not tuning to the benchmark is itself a credibility property. Full per-category breakdown, the
-`bge` real-embedder ablation, and the provenance audit live in the harness repo's
+`temporal_rag` by 0.04 — at this suite size, **one query** — entirely the `recency_relevance`
+category (0.50 vs 1.00), whose update turn (*"… briefly noted the project changed to July"*)
+needs definite-NP + ellipsis coreference we did not add.
+
+**Statistical weight:** the suite is ~25 queries; per-category cells rest on 2–10 scenarios and
+carry no confidence intervals. Treat the table as directional. **Tuning disclosure:** the first
+scored run *lost* on recall and answer accuracy; three general-purpose capabilities (multi-entity
+routing, relational extraction patterns, recency pronoun coreference) were then added and the
+suite re-run until CB led the quality axes. Each lever is general-purpose code (no gold peeking,
+no phrasing-specific regexes), but they were accepted under benchmark selection pressure by the
+same author who wrote the corpus generators — a stronger claim requires a frozen configuration on
+an externally-authored benchmark. Full per-category breakdown, the `bge` real-embedder ablation,
+and the provenance audit live in the harness repo's
 [`RESULTS_curated_brain.md`](https://github.com/doubleMcyber/longitudinal-memory-eval-harness/blob/claude/curated-brain-adapter/RESULTS_curated_brain.md).
 
-## Result — vs a named system (Mem0), preliminary
+## Result — vs a named system (Mem0), preliminary and **mixed**
 
-A real head-to-head vs **Mem0** (`mem0ai` 2.0.7), run fully offline (Mem0 driven by a small local
+A head-to-head vs **Mem0** (`mem0ai` 2.0.7), run fully offline (Mem0 driven by a small local
 model + the same offline embedder, in-memory qdrant). Mem0 is CPU-bound (~2.7 min/add), so this is
-a small **n=3** subset, not the full suite:
+a small **n=3** subset — and, we later determined, a **CB-favorable** subset (smallest scenario
+per category). The initial table:
 
 | metric | curated_brain | temporal_rag | mem0 (Qwen-2B) |
 |---|---|---|---|
@@ -52,30 +69,54 @@ a small **n=3** subset, not the full suite:
 | precision@k | **1.00** | 0.67 | 0.37 |
 | contradiction-resolution | **1.00** | 0.00 | 0.00 |
 
+**Corrections that must be read with that table:**
+
+- **Broader partial run (long-0/1, lexgap-0):** on plain longitudinal recall all three systems
+  **tie on answer accuracy (1.00)**; paraphrase (lexical-gap) fails for *all* three under the
+  shared offline embedder. The honest synthesis is "CB leads precision and
+  contradiction-resolution; answer accuracy ties on plain recall" — **not** a sweep.
+- **Provenance artifact:** Mem0 rewrites facts, losing `(source_session, source_turn)` provenance,
+  so this harness's recall/precision **cannot credit Mem0's design**. In a later run where Mem0
+  was made fully functional (grammar-constrained JSON decoding, same Qwen3-1.7B for both systems),
+  Mem0 scored **answer accuracy 1.00 — an exact tie with CB** — while its recall/precision still
+  read 0.00 purely as a metric artifact. Mem0's precision/contradiction cells above are therefore
+  **not claimed as CB wins**.
+- **Rival handicap:** Mem0 ran on a small local model through an OpenAI-shaped shim with frequent
+  JSON-parse failures in the first run — not Mem0 at its recommended cloud configuration.
+
 ## Scope & the path to the full named-rival claim
 
-This is **preliminary** evidence: Curated Brain is competitive-to-better vs strong RAG references
-(fully reproducible above) and beats Mem0 on a small offline subset. It is **not yet** the full
-headline claim — *"LongMemEval ≥ each of Mem0 / Letta / Zep at ≤ cost"* — which needs:
+This is **preliminary** evidence: Curated Brain is competitive-to-better vs the harness's RAG
+references (fully reproducible above), and the Mem0 comparison is mixed (see corrections above).
+It is **not yet** the full headline claim — *"LongMemEval ≥ each of Mem0 / Letta / Zep at ≤
+cost"* — which needs:
 
 1. A **capable shared inference endpoint** (one OpenAI-compatible model that CB's extractor and
    every rival call, so the model is held constant). The providers for this already ship in CB
    (`OpenAICompatLLM` / `OpenAICompatEmbedder`); set `OPENAI_BASE_URL` + `OPENAI_API_KEY`.
-2. **Letta** and **Zep** adapters in the harness (Mem0 + a Letta stub exist; Zep needs its Docker
-   server) — each pointed at the same endpoint.
+2. **Letta** and **Zep** adapters in the harness pointed at that endpoint. Mem0's adapter is built
+   and proven functional; a Docker-free **Zep** adapter exists (Graphiti over embedded Kuzu,
+   `adapters/zep_graphiti.py`); Letta is still a stub.
 3. Enough throughput to run the **full suite** for every system (the Mem0-on-CPU run above is ~5 h
    for one system; a hosted endpoint removes that wall).
+4. **An externally-authored benchmark and a frozen CB configuration** — the run must use
+   LongMemEval/LoCoMo as published, with CB's config tagged *before* the first scored run, rivals
+   at their recommended configs, an LLM-judged answer metric, and bootstrap CIs. A win on our own
+   diagnostic suite, however reproducible, is not the claim.
 
-When (1)–(3) are available the run is one command per backend (`mem_eval.runner.cli run --backend
-<name> …`) followed by `compare`. Until then, the result here is the strongest reproducible
-evidence the architecture wins on the quality axes that distinguish a memory layer from plain RAG:
-**precision, contradiction-resolution, and staleness.**
+When (1)–(4) are available the run is one command per backend (`mem_eval.runner.cli run --backend
+<name> …`) followed by `compare`. Until then, the result here is reproducible evidence that the
+architecture leads **on our own diagnostic suite** on the quality axes that distinguish a memory
+layer from plain RAG — precision, contradiction-resolution, and staleness — with the authorship
+and metric caveats above.
 
-**Why not just run it locally now?** Measured, not assumed (2026-06-20): this box *has* network
-(the clients pip-install) but **no Docker**, so Zep's server can't run at all. And Mem0 makes many
-LLM calls per add — a tiny fast model (`Qwen3-0.6B`) projects to **~11.5 h** for the small suite
-*and* scores 0.00 (too weak to be a fair rival), while a fair model (≥2B) is ~5 h for Mem0 alone.
-The bottleneck is a capable shared **endpoint**, which is exactly requirement (1).
+**Why not just run it locally now?** Measured, not assumed (2026-06-20): the rivals all run
+Docker-free (Zep via Graphiti + embedded Kuzu), but every local-inference avenue was measured to
+be throughput-infeasible on this hardware — Mem0 makes many LLM calls per add; a tiny fast model
+projects to **~11.5 h** for the small suite *and* is too weak to be a fair rival (0.00), a fair
+model (≥2B–8B) runs at 0.03–1.2 tok/s here, and the one working forced-JSON configuration costs
+~28 min per 2-turn scenario. The bottleneck is a capable shared **endpoint**, which is exactly
+requirement (1).
 
 ### Honest caveats
 
@@ -84,4 +125,5 @@ The bottleneck is a capable shared **endpoint**, which is exactly requirement (1
   wires a real one into CB; the references would get `bge` too).
 - **Storage slope** (517 vs 46) is a serialization artifact — `len(snapshot())` is a verbose JSON
   dump vs the references' raw chunks — not claimed as a win or a loss.
-- The Mem0 number is **n=3**; treat it as directional, not conclusive.
+- The Mem0 numbers are **n=3 on a CB-favorable subset with a handicapped rival** — see the
+  corrections block above; the only claim we stand behind is the mixed synthesis stated there.
