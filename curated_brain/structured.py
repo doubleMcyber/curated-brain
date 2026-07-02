@@ -25,9 +25,13 @@ class StructuredTier:
         # (so in-place supersede stays consistent). Derived, not serialized — `to_dict` emits
         # only `facts`, so snapshots stay byte-identical (AC-1). Turns per-key reads O(1).
         self._by_key: dict[tuple[str, str], list[Fact]] = {}
+        # (norm predicate, norm object) -> facts: the INVERSE index, so set queries ("who
+        # lives in Berlin?") don't scan every fact. Same shared-object discipline as _by_key.
+        self._by_obj: dict[tuple[str, str], list[Fact]] = {}
 
     def _index(self, f: Fact) -> None:
         self._by_key.setdefault((normalize(f.subject), normalize(f.predicate)), []).append(f)
+        self._by_obj.setdefault((normalize(f.predicate), normalize(f.object)), []).append(f)
 
     # ------------------------------------------------------------------ write path ---
     def assert_fact(self, *, fact_id: str, subject: str, predicate: str, object: str,
@@ -146,6 +150,43 @@ class StructuredTier:
     def open_facts(self) -> list[Fact]:
         return [f for f in self.facts if f.is_open]
 
+    def subjects_where(self, predicate: str, object: str, t: float | None = None) -> list[str]:
+        """Inverse / set query: every subject for which ``(subject, predicate, object)`` is
+        currently true (or true as believed at ``t``) — "who lives in Berlin?",
+        "who reports to Bob?". Sorted, distinct, O(matches) via the inverse index."""
+        cands = self._by_obj.get((normalize(predicate), normalize(object)), [])
+        if t is None:
+            hits = [f for f in cands if f.is_open]
+        else:
+            hits = [f for f in cands
+                    if f.valid_from <= t < f.valid_to and f.created_at <= t < f.expired_at]
+        return sorted({f.subject for f in hits})
+
+    def forget(self, subject: str, predicate: str | None = None, *,
+               as_object: bool = False) -> int:
+        """Hard-retract facts (the deletion path — e.g. a GDPR erasure request). Removes
+        every fact (open AND superseded history) whose subject matches — and, with
+        ``as_object``, every fact whose *object* names the subject (other entities' facts
+        that embed this entity's data). Returns the number of facts removed.
+
+        This is the ONE deliberate exception to the never-hard-delete invariant (PRD §8):
+        supersede preserves history; ``forget`` erases it, on explicit request only."""
+        ns = normalize(subject)
+        np_ = normalize(predicate) if predicate is not None else None
+
+        def doomed(f: Fact) -> bool:
+            if normalize(f.subject) == ns and (np_ is None or normalize(f.predicate) == np_):
+                return True
+            return as_object and np_ is None and normalize(f.object) == ns
+
+        removed = sum(1 for f in self.facts if doomed(f))
+        if removed:
+            self.facts = [f for f in self.facts if not doomed(f)]
+            self._by_key, self._by_obj = {}, {}
+            for f in self.facts:
+                self._index(f)
+        return removed
+
     def predicates_for(self, subject: str) -> list[str]:
         """Distinct predicates with a currently-open fact for ``subject`` (sorted, so the
         order is deterministic regardless of insertion order)."""
@@ -160,6 +201,6 @@ class StructuredTier:
 
     def load(self, rows: list[dict]) -> None:
         self.facts = [Fact(**d) for d in rows]
-        self._by_key = {}
+        self._by_key, self._by_obj = {}, {}
         for f in self.facts:
             self._index(f)

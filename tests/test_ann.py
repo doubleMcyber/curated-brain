@@ -112,7 +112,30 @@ def test_vector_tier_ann_backend_matches_brute_force_at_scale():
     assert t_ann < t_bf, f"ann {t_ann:.3f}s not faster than brute {t_bf:.3f}s"
     # the metadata filters still apply on top of the ANN fast path
     assert ann.search(queries[0], k=10, tier="semantic") == []  # all records are episodic
-    # snapshotting an opt-in HnswIndex tier fails LOUDLY (not a raw AttributeError) — byte
-    # determinism (AC-1) is a BruteForce-only feature, and the error says so.
-    with pytest.raises(TypeError, match="not serializable"):
-        ann.to_dict()
+    # snapshotting an opt-in HnswIndex tier WORKS (records-only payload; previously it
+    # raised, so stats()/save() crashed the moment the production index was plugged in)
+    blob = ann.to_dict()
+    assert "index" not in blob  # ANN vectors are not serialized — texts re-embed on load
+
+
+def test_hnsw_tier_snapshot_roundtrip_demotes_to_exact():
+    # Full round-trip with a real embedder: an Hnsw-backed tier serializes records-only and
+    # load() rebuilds vectors from text on an exact BruteForceIndex (documented demotion) —
+    # the restored tier answers identically to an exact tier built from the same texts.
+    from curated_brain.fakes import DeterministicEmbedder
+    from curated_brain.vector import HnswIndex, VectorTier
+
+    emb = DeterministicEmbedder(64)
+    texts = [f"note {i} about topic-{i}" for i in range(50)]
+    ann = VectorTier(emb, index=HnswIndex(64, max_elements=64))
+    exact = VectorTier(emb)
+    for i, t in enumerate(texts):
+        ann.add(rid=f"r{i}", text=t, wall_ts=float(i), session_id="s")
+        exact.add(rid=f"r{i}", text=t, wall_ts=float(i), session_id="s")
+
+    restored = VectorTier(emb)
+    restored.load(ann.to_dict())
+    assert type(restored.index).__name__ == "BruteForceIndex"
+    assert len(restored) == len(ann)
+    assert [(r.rid, round(s, 12)) for r, s in restored.search("topic-7", k=5)] == \
+        [(r.rid, round(s, 12)) for r, s in exact.search("topic-7", k=5)]

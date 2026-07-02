@@ -491,6 +491,17 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 3a production essentials (gate 157 passed; harness hash bit-identical
+  673a25c7… for the third consecutive workstream).** (1) `forget()` hard erasure — GDPR path,
+  the one documented exception to never-hard-delete: facts incl. superseded history +
+  object-side facts on full forget, asserting episodes/vector records, echo-guard entries,
+  resolver entry; free-text mere-mentions documented as untraceable. (2) inverse/set queries
+  (`answer_who`, `subjects_where`, new (predicate, object) index) — "who lives in Berlin?"
+  was structurally unanswerable before. (3) Hnsw-backed `snapshot`/`save`/`stats` no longer
+  crash (records-only payload, re-embed on load with documented demotion to exact).
+  (4) derived planner/stale state cached, invalidated on mutation (was full-store scans per
+  query). Remaining Phase-3 scope → 3b: namespacing (user/agent/session scoping — the
+  biggest rival-parity gap), real LLM consolidation, filter-pushdown, ≥1e5 load test.
 - 2026-07-02 — **Phase 1: extraction is now the proven default path (reviewer PASS, gate
   147 passed).** Reviewer independently verified: bit-identical harness hash, extraction-ON
   beats-all-baselines holds on seeds 0/1/2 (not cherry-picked), first-person path opt-in +
