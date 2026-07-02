@@ -491,6 +491,30 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-02 — **Phase 1: extraction is now the proven default path (reviewer PASS, gate
+  147 passed).** Reviewer independently verified: bit-identical harness hash, extraction-ON
+  beats-all-baselines holds on seeds 0/1/2 (not cherry-picked), first-person path opt-in +
+  injection-safe, echo-suppression judged a defensible general principle with the tradeoff
+  documented. Reviewer's coupling judgment on the 2 new verb patterns ("has moved to",
+  "works on project"): in-distribution but general English; the extractor still misses 4 of
+  the dataset's 5 project templates — evidence of good faith, not template-hardcoding.
+  Noted limitations: multi-word/non-ASCII speakers fail closed (subject patterns are
+  single-token ASCII); "manager's name" tokenizes to a rough predicate key. The red-team's controlling insight ("benchmarks the config that can't work on
+  real data, ships unbenchmarked the config that could") is closed on the in-repo suite:
+  (1) predicate schemas unified (`location`→`city` alias; verb + possessive + planner + dataset
+  now one vocabulary — verb-form updates finally supersede possessive-form facts);
+  (2) first-person extraction (`resolve_first_person` + opt-in `metadata.speaker`; MCP defaults
+  speaker="User"; bare capitalized pronouns no longer parsed as names) — the dominant real-data
+  form previously extracted to NOTHING; (3) echo suppression: a verbatim restatement of an
+  already-asserted statement reinforces instead of re-asserting (found live: the dataset's
+  redundancy stream restated pre-update lines late, flipping extraction-ON C2 back to stale —
+  the general Pillar-B fix, not a dataset patch); (4) **AC-9 now passes with `metadata.fact`
+  withheld** — `run_harness(extraction=True)`: CB on the same raw text as the baselines scores
+  1.0/1.0/0.99/0.91/1.0/1.0 (identical to spoon-fed) and strictly beats all three on every
+  category, locked in CI; (5) planner prefers stored predicates over keyword guesses;
+  (6) PRD §6 logprob surprise formally deferred post-v1 with rationale. External harness:
+  determinism hash BIT-IDENTICAL before/after (673a25c7…). Still open toward a real-data claim:
+  definite-NP coreference, LLM-extractor benchmarking on real logs (endpoint-bound).
 - 2026-07-02 — **Phase 2 correctness fixes (red-team v2), reviewer PASS, harness numbers
   byte-identical** (re-ran the standard suite: 0.88/0.79/1.00/0.00/0.76 — unchanged). Fixed:
   (1) pipe-in-fact-value crash in consolidate (fact_key now a list; legacy strings parsed

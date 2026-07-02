@@ -49,15 +49,15 @@ class Planner:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
 
-        preds = [p for p, kws in PRED_KEYWORDS.items() if any(k in toks for k in kws)]
-        # Schema-driven: also recognize any predicate ACTUALLY STORED when ALL of its
-        # non-stop content tokens appear in the question. This lifts the planner past the 5
-        # hardcoded vocab predicates AND handles multi-word predicates ("mailing address"),
-        # so open-domain questions route precisely to the structured tier instead of falling
-        # through to the backstop. Equivalent to a single-token match for one-word predicates.
-        for p in sorted(predicates):
-            ptoks = set(tokenize(p, drop_stop=True))
-            if ptoks and ptoks <= toks and p not in preds:
+        # Schema-driven FIRST: a predicate ACTUALLY STORED whose non-stop content tokens all
+        # appear in the question is ground truth about what the store can answer, so it
+        # outranks a keyword-mapped guess (e.g. stored "email address" beats the unstored
+        # keyword predicate "email" — previously the guess won and the lookup missed).
+        # Handles multi-word predicates; equivalent to single-token match for one-word ones.
+        preds = [p for p in sorted(predicates)
+                 if (pt := set(tokenize(p, drop_stop=True))) and pt <= toks]
+        for p, kws in PRED_KEYWORDS.items():
+            if p not in preds and any(k in toks for k in kws):
                 preds.append(p)
         # A predicate is relational if hardwired OR if it was STORED with an entity-valued
         # object (``relation_preds``) — generalizing multi-hop beyond the "manager" relation to
