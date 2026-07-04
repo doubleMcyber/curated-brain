@@ -397,14 +397,26 @@ class CuratedBrain(MemoryBackend):
 
     # ------------------------------------------------------------------ query path ---
     def query(self, question: str, *, session_id: str, timestamp: float,
-              k: int = 8) -> Retrieval:
+              k: int = 8, window: tuple[float, float] | None = None) -> Retrieval:
         """Hybrid retrieval (PRD §7): plan -> fetch structured + vector -> fuse, re-rank,
         supersede-filter. The exact current/as-of fact is surfaced first; superseded values
-        are dropped so stale contradictions never reach the agent."""
+        are dropped so stale contradictions never reach the agent.
+
+        ``window`` optionally scopes episodic recall to a ``(from_ts, to_ts)`` time range —
+        time-scoped memory ("what did I note last spring?"), threaded to the vector tier's
+        window filter. Default None → unscoped (byte-identical to before; AC-1/AC-9 intact).
+        """
         if not isinstance(question, str):
             raise TypeError(f"question must be str, got {type(question).__name__}")
         if not math.isfinite(timestamp):
             raise ValueError(f"timestamp must be finite, got {timestamp!r}")
+        if window is not None and not (
+                isinstance(window, tuple) and len(window) == 2
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                        and math.isfinite(x) for x in window)
+                and window[0] <= window[1]):
+            raise ValueError(f"window must be a (from_ts, to_ts) tuple with from<=to, "
+                             f"got {window!r}")
         pred_vocab, relation_preds, (stale_rids, stale_pairs) = self._derived_state()
         plan = self.planner.plan(question, entities=self._entities, predicates=pred_vocab,
                                  relation_preds=relation_preds, session_ts=self._session_ts)
@@ -464,7 +476,7 @@ class CuratedBrain(MemoryBackend):
                 if len(lines) >= budget:
                     break
 
-        vhits = self.vector.search(question, k=k, t=timestamp, entity=cent)
+        vhits = self.vector.search(question, k=k, t=timestamp, entity=cent, window=window)
         for it in fuse(vhits, now=timestamp, stale_rids=stale_rids, stale_pairs=stale_pairs):
             if len(lines) >= self._max_ctx:
                 break

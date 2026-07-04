@@ -51,6 +51,12 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Added (2026-07-03)
+- **Time-scoped retrieval**: `CuratedBrain.query(..., window=(from_ts, to_ts))` scopes episodic
+  (vector-tier) recall to a time range — "what did I note last spring?". Threads to the vector
+  tier's existing window filter; validated fail-loud; default `None` → byte-identical (AC-1/AC-9
+  intact). Structured-fact answers are current-value/as-of and intentionally not windowed.
+
 ### Added (Track G observability/cost, 2026-07-03)
 - **Structured logging** on the `curated_brain` logger (stdlib `NullHandler` — silent unless the
   app configures logging): write-decision trace (DEBUG), consolidation summary (INFO), and the

@@ -556,6 +556,16 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later¹²) — **Capability: time-scoped retrieval `query(window=(from,to))` (reviewer
+  PASS).** A genuine memory capability (scope episodic recall to a time range — "what did I note
+  last spring?"), exposing the vector tier's existing but unwired `window` filter through the
+  public query API. Fail-loud validation (tuple of finite non-bool numbers, from≤to; reviewer nit
+  fixed → non-tuple/list now raises clear ValueError not TypeError). Additive + AC-1/AC-9
+  byte-identical (default window=None; diagnostic hash 673a25c7 unchanged). Structured facts
+  intentionally not windowed (they're current-value/as-of answers, documented). +4 tests (190
+  passed), ruff+mypy clean. Reviewer PASS. This is genuine "make it better" library work (the
+  goal's planning mandate), validated on its own merits — NOT a LongMemEval lever (does not
+  address clause 1/Letta, still blocked on a user-provided hosted endpoint).
 - 2026-07-03 (later¹¹) — **Track G structured logging (reviewer PASS).** The audit's "zero logging"
   gap closed: `curated_brain` package logger + NullHandler (silent by default); write-decision
   trace (DEBUG), consolidation summary (INFO), HNSW degenerate-graph degradation (WARNING, was
