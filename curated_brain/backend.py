@@ -14,6 +14,7 @@ from __future__ import annotations
 import abc
 import inspect
 import json
+import logging
 import math
 from dataclasses import MISSING
 
@@ -44,6 +45,13 @@ MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-con
 FREE_DEDUP_THRESHOLD = 0.85  # only genuine near-duplicate free-text episodes are merged
 
 SNAPSHOT_VERSION = 1
+
+# Library logger with a NullHandler (stdlib best practice): silent unless the application
+# configures logging. Logs decisions/degradations only — never secrets, never observation
+# content (which could carry PII). Purely observational: emits no state, so AC-1 determinism
+# and byte-identical snapshots are unaffected.
+logger = logging.getLogger("curated_brain")
+logger.addHandler(logging.NullHandler())
 
 
 def _fact_key_parts(rec: EpisodicRecord) -> list[str]:
@@ -245,6 +253,10 @@ class CuratedBrain(MemoryBackend):
         decision = self.gate.decide(novelty, contradiction=contradiction)
         self._decisions[decision] += 1
         surprise = 1.0 if contradiction else novelty
+        # Write-decision trace (the Pillar-B selectivity signal). Content is NOT logged — only
+        # the decision + scores — so no observation text/PII reaches the log stream.
+        logger.debug("write decision=%s novelty=%.3f contradiction=%s session=%s",
+                     decision, novelty, contradiction, session_id)
 
         rec_id = None
         if decision == STORE:
@@ -587,6 +599,9 @@ class CuratedBrain(MemoryBackend):
         self._episodes = new_eps
         self._ep_by_id = {r.id: r for r in new_eps}
         contradictions_resolved = sum(1 for f in self.structured.facts if not f.is_open)
+        logger.info("consolidate: episodes_in=%d claims_out=%d dupes_merged=%d pruned=%d "
+                    "contradictions_resolved=%d", episodes_in, claims_out, dupes_merged,
+                    pruned, contradictions_resolved)
         return ConsolidationReport(episodes_in=episodes_in, claims_out=claims_out,
                                    dupes_merged=dupes_merged,
                                    contradictions_resolved=contradictions_resolved, pruned=pruned)

@@ -556,6 +556,16 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later¹¹) — **Track G structured logging (reviewer PASS).** The audit's "zero logging"
+  gap closed: `curated_brain` package logger + NullHandler (silent by default); write-decision
+  trace (DEBUG), consolidation summary (INFO), HNSW degenerate-graph degradation (WARNING, was
+  silent). Purely observational — no observation content/PII or secrets logged (reviewer probed
+  with distinctive PII text + fact value: neither leaks; providers.py api_key never logged), no
+  state change (AC-1/AC-9 byte-identical, hash 673a25c7; +4 tests incl. snapshot-identical-across-
+  log-levels). 186 passed, ruff+mypy clean. Reviewer PASS. Track G (observability/cost) now
+  substantively done: metrics + cost accounting + $ pricing + logging. Documented follow-ups:
+  in-repo determinism-hash assertion; log provider-HTTP failures. Does NOT address clause 1
+  (Letta) — still blocked on a user-provided hosted endpoint as exhaustively documented above.
 - 2026-07-03 (later¹⁰) — **Per-category ceiling proof: oracle gap is arithmetically bounded, and
   CB beats Letta on its OWN thesis.** Computed CB-vs-Letta oracle by category (n=23 each): CB
   **wins knowledge-update 0.478 vs 0.435** (belief revision — CB's bi-temporal thesis working);

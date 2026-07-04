@@ -8,12 +8,15 @@ a dot product. Vectors serialize as exact hex bytes, keeping snapshots byte-dete
 
 from __future__ import annotations
 
+import logging
 from dataclasses import MISSING, dataclass, field
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
 from curated_brain.util import jaccard, normalize
+
+logger = logging.getLogger("curated_brain")
 
 # Hybrid-retrieval weights: blend embedding similarity (semantic) with lexical token-overlap
 # at the search ranking, so neither modality's blind spot dominates. General + deterministic.
@@ -156,8 +159,10 @@ class HnswIndex:
                 # points are reachable ("cannot return contiguous 2D array"). Degrade to
                 # what IS reachable instead of crashing the query path.
                 if k <= 1:
+                    logger.warning("HnswIndex.topk: graph unreachable at k<=1, returning empty")
                     return []
                 k = max(1, k * 4 // 5)
+                logger.warning("HnswIndex.topk: degenerate graph, retrying at reduced k=%d", k)
         return [(int(lbl), 1.0 - float(d)) for lbl, d in zip(labels[0], dists[0], strict=True)
                 if int(lbl) in self._live]
 
