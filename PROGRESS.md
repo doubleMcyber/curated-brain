@@ -514,12 +514,20 @@ cheaper); CB ≥ Letta in the context-overflow (`_s`) regime a memory layer exis
 matches the measured data and removes the unwinnable oracle target that caused two reverts.
 
 Prioritized by (credibility)/(effort):
-1. **Soft entity scoping** (`VectorTier.search`, new `entity_soft` param; `query()` passes it):
-   entity-matched records rank FIRST and fill their slots as today; ONLY if fewer than k
-   survivors, fill remaining slots with unscoped semantic top-k. Precision-preserving BY DESIGN
-   — a no-op when scoping already fills k (so Gate A precision 0.79 holds), a fix only where
-   scoping starves the payload (single-session-assistant, the biggest gap 0.261 vs 0.957). This
-   is the precision-safe version of the two reverted attempts. **Validate on Gate A first.**
+1. **Soft entity scoping** — **TRIED 2026-07-03, REJECTED by Gate A (precision 0.79→0.573).**
+   Implemented exactly as designed (`VectorTier.search` `entity_soft`: entity matches fill
+   first, unscoped semantic fill only remaining slots when scoping under-fills; default-off →
+   Gate A part 1 byte-identical 673a25c7 confirmed). But the "no-op when scoping fills k"
+   assumption is FALSE at realistic k: on the diagnostic suite each entity has only ~5-7 facts,
+   so at k=10 scoping under-fills for MOST queries → the fill fires constantly → precision
+   collapses 0.79→0.573. The firewall worked: rejected on blind data before any LongMemEval
+   look; reverted (three attempts now, all fail their held-out gate). **The design direction is
+   still right but "fill all remaining slots" is too aggressive.** Refined next attempts to try
+   (each gated the same way): (a) fill ONLY when entity-scoped returns ZERO (not merely <k);
+   (b) relevance-threshold the fillers (only add unscoped hits above a similarity floor);
+   (c) the more fundamental fix — tag raw turns with mentioned entities AT INGEST so entity
+   scoping actually includes them (needs the adapter to extract session entities before writing
+   turns, resolving the ordering problem). (c) is the most promising + most work.
 2. **GPT-4o judge** in `bench_longmemeval.py` (route only the JUDGE call to GPT-4o, systems stay
    on the shared local model) — re-score existing frozen outputs, no re-run; cheapest
    leaderboard-credibility win.
@@ -548,6 +556,18 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later³) — **Executed the planning roadmap's #1 item (soft entity scoping) under the
+  firewall; Gate A REJECTED it — third held-out-validated rejection.** Implemented the
+  precision-preserving design exactly (entity_soft two-pass fill, unit-tested: no-op when scoping
+  fills k, fills only when under-k; 165 passed). Gate A part 1 (default-off) byte-identical
+  (673a25c7 ✓). Gate A part 2 (soft ON, diagnostic suite): precision **0.79→0.573** — the fill
+  fires on nearly every query because at k=10 each entity has too few tagged records, flooding
+  slots with irrelevant unscoped hits. Rejected on LongMemEval-BLIND data *before* any benchmark
+  run (the firewall working as intended — proceeding to LongMemEval with a precision-regressing
+  change would be the gaming this guards against). Reverted; gate green + mypy clean + AC-9 hash
+  restored. Net: three fixes tried, all fail their held-out precision gate → strong evidence the
+  Letta-gap close is a real recall/precision tradeoff needing a smarter design (see roadmap #1
+  a/b/c — ingest-time entity tagging of raw turns is the promising path). No benchmark chased.
 - 2026-07-03 (later²) — **Ran the goal's planning + production-audit subagents (both Opus); fixed
   a real gate blocker.** The production audit caught that **CI's mypy step was RED** (2 errors in
   `retrieval.py` `fuse`: `stale_rids: set[str] = frozenset()` / `stale_pairs: list[...] = ()` —
