@@ -14,8 +14,14 @@ byte-serializable for deterministic eval. A SQLite backend (PRD §5.3) is a drop
 
 from __future__ import annotations
 
+from dataclasses import MISSING
+
 from curated_brain.models import INF, Fact
 from curated_brain.util import normalize
+
+_FACT_FIELDS = frozenset(Fact.__dataclass_fields__)
+_FACT_REQUIRED = frozenset(n for n, f in Fact.__dataclass_fields__.items()
+                           if f.default is MISSING and f.default_factory is MISSING)
 
 
 class StructuredTier:
@@ -200,6 +206,20 @@ class StructuredTier:
         return [vars(f) for f in self.facts]
 
     def load(self, rows: list[dict]) -> None:
+        # rows come from an untrusted snapshot (restore path): validate each before splatting
+        # into Fact(**d), so a malformed/hostile blob fails with a clear ValueError instead of
+        # an opaque TypeError (mirrors the episodic-record hardening in backend._validate_snapshot).
+        if not isinstance(rows, list):
+            raise ValueError(f"structured facts must be a list, got {type(rows).__name__}")
+        for i, d in enumerate(rows):
+            if not isinstance(d, dict):
+                raise ValueError(f"fact[{i}] must be an object, got {type(d).__name__}")
+            extra = set(d) - _FACT_FIELDS
+            if extra:
+                raise ValueError(f"fact[{i}] has unknown fields {sorted(extra)}")
+            missing = _FACT_REQUIRED - set(d)
+            if missing:
+                raise ValueError(f"fact[{i}] missing required fields {sorted(missing)}")
         self.facts = [Fact(**d) for d in rows]
         self._by_key, self._by_obj = {}, {}
         for f in self.facts:

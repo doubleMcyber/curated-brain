@@ -15,6 +15,7 @@ import abc
 import inspect
 import json
 import math
+from dataclasses import MISSING
 
 from curated_brain.consolidation import cluster_by_similarity, representative
 from curated_brain.fakes import DeterministicEmbedder
@@ -54,6 +55,36 @@ def _fact_key_parts(rec: EpisodicRecord) -> list[str]:
         return rec.fact_key
     assert rec.fact_key is not None
     return rec.fact_key.split("|", 2)
+
+
+_EPISODIC_FIELDS = frozenset(EpisodicRecord.__dataclass_fields__)
+_EP_REQUIRED = frozenset(
+    n for n, f in EpisodicRecord.__dataclass_fields__.items()
+    if f.default is MISSING and f.default_factory is MISSING)
+
+
+def _validate_snapshot(state: dict) -> None:
+    """Validate a decoded snapshot's top-level shape before restore consumes it, so an
+    untrusted/corrupt blob fails with a clear ValueError instead of an opaque crash deep in
+    dataclass/index construction. Bounds are structural (types + episodic-record keys); the
+    vector-size bound lives in ``BruteForceIndex.from_dict``."""
+    if "counter" not in state or not isinstance(state["counter"], int):
+        raise ValueError("snapshot missing an integer 'counter'")
+    episodic = state.get("episodic", [])
+    if not isinstance(episodic, list):
+        raise ValueError(f"snapshot 'episodic' must be a list, got {type(episodic).__name__}")
+    for i, d in enumerate(episodic):
+        if not isinstance(d, dict):
+            raise ValueError(f"episodic[{i}] must be an object, got {type(d).__name__}")
+        extra = set(d) - _EPISODIC_FIELDS
+        if extra:
+            raise ValueError(f"episodic[{i}] has unknown fields {sorted(extra)}")
+        missing = _EP_REQUIRED - set(d)
+        if missing:
+            raise ValueError(f"episodic[{i}] missing required fields {sorted(missing)}")
+    for key in ("structured", "vector"):
+        if key in state and not isinstance(state[key], (list, dict)):
+            raise ValueError(f"snapshot '{key}' has wrong type {type(state[key]).__name__}")
 
 
 def _validate_fact(fact) -> None:
@@ -686,7 +717,18 @@ class CuratedBrain(MemoryBackend):
                           allow_nan=False).encode("utf-8")
 
     def restore(self, blob: bytes) -> None:
-        state = from_jsonable(json.loads(blob.decode("utf-8")))
+        # restore() takes UNTRUSTED bytes (a file, a network blob). Validate structure up
+        # front and fail with a clear ValueError, rather than letting a malformed blob crash
+        # deep inside with an opaque KeyError/TypeError or splat unexpected fields into a
+        # dataclass. (No behavior change for a valid snapshot — happy path is unchanged.)
+        try:
+            raw = json.loads(blob.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ValueError(f"snapshot is not valid UTF-8 JSON: {e}") from e
+        if not isinstance(raw, dict):
+            raise ValueError(f"snapshot must be a JSON object, got {type(raw).__name__}")
+        state = from_jsonable(raw)
+        _validate_snapshot(state)
         snap_dim = state.get("config", {}).get("dim")
         if snap_dim is not None and snap_dim != self.embedder.dim:
             # A dim mismatch used to surface only later, as a shape error mid-query (or,
