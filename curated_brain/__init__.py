@@ -25,6 +25,7 @@ from curated_brain.models import (
     WriteReceipt,
 )
 from curated_brain.namespace import NamespacedMemory
+from curated_brain.pricing import Pricing
 from curated_brain.protocols import LLM, Embedder
 from curated_brain.providers import (
     OpenAICompatEmbedder,
@@ -43,6 +44,7 @@ __all__ = [
     "CuratedBrain",
     "MemoryBackend",
     "NamespacedMemory",
+    "Pricing",
     "resolve_first_person",
     # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
     "Embedder",

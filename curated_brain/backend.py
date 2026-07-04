@@ -157,7 +157,7 @@ class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None, max_context_items: int | None = None,
-                 summarizer=None) -> None:
+                 summarizer=None, pricing=None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
@@ -181,6 +181,9 @@ class CuratedBrain(MemoryBackend):
         # real one-sentence summary instead of the most-reinforced member verbatim (PRD §8
         # "cluster & summarize"). Default None keeps consolidation model-free + deterministic.
         self.summarizer = summarizer
+        # Optional Pricing (token→$): when set, metrics()["cost"]["estimated_usd"] reports the
+        # dollar cost of the metered hot-path tokens. Default None → cost stays token-only.
+        self.pricing = pricing
         self.reset()
 
     # ------------------------------------------------------------------ identifiers --
@@ -653,7 +656,13 @@ class CuratedBrain(MemoryBackend):
             # to a rival's, for the Track-D "≤ its cost" claim.
             "cost": {**c,
                      "avg_context_tokens": (c["context_tokens_served"] / c["queries"])
-                     if c["queries"] else 0.0},
+                     if c["queries"] else 0.0,
+                     # $ estimate of the metered hot-path tokens when a Pricing is configured
+                     # (embeddings + served context; see curated_brain.pricing for scope).
+                     **({"estimated_usd": self.pricing.estimate(c),
+                         "usd_per_query": (self.pricing.estimate(c) / c["queries"])
+                         if c["queries"] else 0.0}
+                        if self.pricing is not None else {})},
         }
 
     def reset(self) -> None:

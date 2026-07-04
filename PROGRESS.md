@@ -556,6 +556,20 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁷) — **Track G cost: token→$ pricing (reviewer PASS).** `Pricing` dataclass +
+  `CuratedBrain(pricing=)` → `metrics()["cost"]` reports `estimated_usd`/`usd_per_query` from the
+  metered hot-path tokens (embeddings + served context); makes the DONE-clause "≤ its cost"
+  expressible in dollars, not just tokens/wall-time. Deterministic, honestly scoped (excludes
+  extractor completion tokens + consolidation re-embeds — documented), default-off so metrics()
+  shape is unchanged; AC-9 hash 673a25c7 unchanged. +5 tests incl. one documenting the honest
+  semantic that a gate-REJECTED write still costs its embedding (cost = work performed, not
+  storage outcome). 182 passed, ruff+mypy clean. Reviewer PASS. Advances Track G; does NOT
+  address clause 1 (Letta) — still blocked as documented. **Session-terminal note:** clause 1's
+  Letta sub-clause is structurally unmeetable in-session (oracle rewards full-context reading;
+  4 gated retrieval fixes all failed held-out precision; the real close needs a hosted-endpoint
+  `_s`-at-scale rerun or offline extraction work — both out-of-session). Clauses 2&3 met. This
+  session hardened production-readiness (mypy gate fix, complete untrusted-restore hardening,
+  $ cost accounting) while the core clause stays honestly blocked.
 - 2026-07-03 (later⁶) — **Track H security COMPLETE: entire untrusted-restore path now fails loud
   (reviewer PASS).** Closed the three loader surfaces the prior reviewer flagged + two more it
   found: `VectorTier.load` (VectorRecord field validation + int-key/list-meta checks),

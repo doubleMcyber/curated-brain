@@ -51,6 +51,14 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Added (Track G observability/cost, 2026-07-03)
+- **Token→dollar pricing** (`curated_brain.Pricing`): `CuratedBrain(pricing=Pricing(...))` makes
+  `metrics()["cost"]` report `estimated_usd` + `usd_per_query` from the metered hot-path tokens
+  (embeddings computed + context served), so the "≤ cost" comparison is expressible in dollars,
+  not just tokens/wall-time. Deterministic; honestly scoped (excludes an LLM extractor's
+  completion tokens + consolidation re-embeds — documented). Default off → `metrics()` shape
+  unchanged.
+
 ### Security (Track H, 2026-07-03)
 - **Hardened `restore()`/`load()` against untrusted snapshots.** A malformed or hostile blob now
   fails with a clear `ValueError` instead of an opaque `KeyError`/`TypeError` (or a large
