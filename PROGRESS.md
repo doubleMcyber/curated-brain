@@ -556,6 +556,23 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later¹⁰) — **Per-category ceiling proof: oracle gap is arithmetically bounded, and
+  CB beats Letta on its OWN thesis.** Computed CB-vs-Letta oracle by category (n=23 each): CB
+  **wins knowledge-update 0.478 vs 0.435** (belief revision — CB's bi-temporal thesis working);
+  loses single-session-assistant 0.261 vs **0.957** (the answer IS the assistant's verbatim
+  output — full-context reading, curation can't reproduce a table), temporal 0.043 vs 0.435
+  (genuinely fixable — date arithmetic over stored timestamps), preference 0.087 vs 0.217,
+  multi-session/user close. **Theoretical ceiling** (match Letta on laggards + keep CB's win):
+  0.478 — barely above Letta's 0.471. **Realistic ceiling** (single-session-assistant capped ~0.6
+  since curation can't full-context-read it): **~0.42 < Letta 0.471** — so even a perfect campaign
+  on fixable categories does NOT yield CB ≥ Letta on oracle; single-session-assistant dominates
+  and is a full-context-reading category. **The one worth-doing lever = temporal-reasoning**
+  (0.043→~0.4 achievable, +~0.06 overall, firewall-compliant library work, does NOT beat Letta
+  but is a genuine capability). This converts "empirically blocked" → "arithmetically bounded":
+  clause 1's Letta component is not a tuning target. Documented in harness `RESULTS_longmemeval.md`
+  §"arithmetically bounded". No code changed; gate green, repos clean. **Next real capability item
+  (future session, not clause-1-satisfying): temporal-reasoning path** (planner date-intent + wire
+  the unused `VectorTier.search` window arg; test_temporal.py; QueryPlan-diff=0 on diagnostic).
 - 2026-07-03 (later⁹) — **Probed the LAST unblock (hosted inference) — conclusively unavailable in
   this environment.** The credible clause-1 close needs a fast hosted model (rivals at `_s`, n≥100).
   Probed every credential/endpoint present, not assumed: `GEMINI_CLI_IDE_AUTH_TOKEN` → 400/401 on
