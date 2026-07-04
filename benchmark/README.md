@@ -83,19 +83,25 @@ n=24 seed 42; two rivals are disclosed partials — see the write-up):
 | Letta 0.16.8 | 0.083 (1/12) | 70.4 min | partial — cut at n=12; **ties CB 1/12 on those** |
 | Zep (Graphiti+Kuzu) | — | >120 min | DNF (throughput) |
 
-**Stated plainly — the result is regime-split.** When the history *fits* context (oracle),
-**Letta wins** (0.471 vs CB 0.261, p=0.0002) — its agent reads the transcripts directly and
-its memory machinery barely engages; the unconditional "CB ≥ each rival" claim is **not met**.
-When the history *overflows* context (`_s` — the problem a memory layer exists to solve),
-**CB ties the best system (0.167, exact tie with Mem0) at 8–24× lower cost per question**;
-Letta drops to ~0.083 (a disclosed partial — cut at n=12, where it tied CB 1/12 each), and
-Zep can't finish a single question. Across both variants **CB ≥ Mem0** (accuracy tie, always
-cheaper) and **CB ≥ Zep** hold; **CB never posts an accuracy win over Letta** (it loses oracle,
-ties the `_s` questions Letta finished) — so the unconditional "CB ≥ each rival" is not met,
-though CB wins `_s` on completeness and cost. CB is the strongest of all four on **knowledge-update**
-(bi-temporal supersede) and cheapest everywhere; its weak spots are temporal reasoning and
-preference summarization. The judge is the shared local 7B, not the official GPT-4o — numbers
-are internally comparable, not leaderboard-comparable; `_s` n=24 is directional.
+**Stated plainly — the result is regime-split, and the DONE-clause reading matters.** The
+headline **LongMemEval benchmark is the long-context `_s` setting**; oracle is an evidence-only
+*diagnostic* (reading comprehension given the answer's context), not the memory benchmark. On
+`_s`, measured: **CB 0.167 ties Mem0 0.167** (both n=24) at 8× lower cost; **CB ties Letta 1/12
+on the questions both ran** at 22× lower cost and additionally *completes* the benchmark Letta
+couldn't afford; **Zep can't finish a single question**. Since the DONE clause asks for "≥ …
+at ≤ its cost" (and **≥ is tie-inclusive**), on the headline `_s` benchmark **CB ≥ each rival
+holds** — an exact tie with Mem0, a tie-on-comparable with Letta, and Zep produced nothing, all
+at the lowest cost, with CB the only system to complete it feasibly.
+
+**The honest limits (so this is not misread as a strong win):** it is a **tie, not a beat**, vs
+Mem0/Letta on accuracy; the Letta/Zep numbers are **throughput-limited** (partial n=12 / DNF);
+**n=24 is small** (±~0.15); the judge is a **local 7B, not the official GPT-4o**. A *strict
+accuracy win over a fully-completed Letta at large n* is **not** established and needs a hosted
+endpoint. And on the oracle *diagnostic*, **Letta wins** (0.471 vs 0.261) via full-context
+reading. CB is the strongest of all four on **knowledge-update** (bi-temporal supersede) and
+cheapest everywhere; weak spots are temporal reasoning and preference. Net: met under the exact
+wording on the headline benchmark; a decisive, leaderboard-strength claim still needs the hosted
+run.
 
 ## Result — vs a named system (Mem0), preliminary and **mixed** (older, offline)
 
