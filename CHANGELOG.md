@@ -52,6 +52,11 @@ the project is pre-1.0, so the API may still change.
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
 ### Added (Track G observability/cost, 2026-07-03)
+- **Structured logging** on the `curated_brain` logger (stdlib `NullHandler` — silent unless the
+  app configures logging): write-decision trace (DEBUG), consolidation summary (INFO), and the
+  previously-silent HNSW degenerate-graph degradation (WARNING). Purely observational — no
+  observation content/PII or secrets are ever logged, and it changes no computed state (AC-1/AC-9
+  byte-identical).
 - **Token→dollar pricing** (`curated_brain.Pricing`): `CuratedBrain(pricing=Pricing(...))` makes
   `metrics()["cost"]` report `estimated_usd` + `usd_per_query` from the metered hot-path tokens
   (embeddings computed + context served), so the "≤ cost" comparison is expressible in dollars,
