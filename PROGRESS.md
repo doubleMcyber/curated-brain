@@ -497,6 +497,24 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 — **DONE-clause status closed out honestly; declined in-session benchmark tuning.**
+  Evidenced clauses 2 & 3 fresh: `pip install .` into a clean venv imports + write/answer works
+  (v0.1.0), LICENSE/README/CHANGELOG/CONTRIBUTING/CI/pyproject all present, gate green (164
+  passed, ruff clean) on a clean tree. Clause 1 (CB ≥ each rival) stands as **regime-split, not
+  unconditionally met** (CB ≥ Mem0/Zep hold; CB posts no accuracy win over Letta). Diagnosed the
+  largest oracle gap — single-session-assistant 0.261 vs Letta 0.957 — to a real mechanism: raw
+  conversation turns are stored with NO entity tags, so the query's entity-filtered vector search
+  excludes them and the structured backstop fills context with "User's X is Y" fact-echoes; the
+  answer-bearing assistant turn never surfaces. Attempted a general adapter fix (drop synthetic
+  fact-sentences from the vector tier) — it REGRESSED on a 6-question smoke (0/6) because the
+  deeper cause is the entity-filter exclusion of untagged turns, not the echoes. **Chose to REVERT
+  rather than keep iterating**: closing this in-session, after seeing Letta win, against these exact
+  numbers is the post-hoc iterate-until-win pattern this project was red-teamed for twice — even
+  "general" fixes accepted under that selection pressure aren't credible. The honest path to
+  overtaking Letta is general capability work (entity-tag raw turns / unfiltered-vector fallback
+  for open-ended queries; date-aware temporal reasoning; a preference-summary path) developed +
+  validated on HELD-OUT data, then re-run frozen — NOT same-session tuning. Logged as the concrete
+  next-session lever. Repos clean; no CB code changed this step.
 - 2026-07-02 — **TRACK D EXECUTED: first full LongMemEval head-to-head vs ALL THREE named
   rivals.** All three environment blockers found GONE on re-probe (ollama newly installed →
   pulls work, qwen2.5:7b at ~24+ tok/s on Metal; HF LFS egress restored → real LongMemEval
