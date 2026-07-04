@@ -556,6 +556,20 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁸) — **Ruled out the last "just run the benchmark" avenue with statistics.**
+  The `_s` variant IS the headline LongMemEval benchmark (oracle is a diagnostic), and it's where
+  CB co-leads — so the natural question is "complete the cut Letta/Zep `_s` runs and claim CB ≥
+  each." Examined Letta's `_s` rows: on the 12 questions it completed, **Letta 1/12 and CB 1/12 —
+  the SAME single question (q4)**; CB's 0.167 comes only from 3 questions in the other 12 Letta
+  never ran. Completing Letta = fresh ~28 h run (no resume); best case ~CB 4/24 vs Letta 2/24 is
+  **within noise at n=24 (±0.15)** on a subset where they exactly tied → not a credible win, and
+  presenting it as one would be the overclaiming this project was red-teamed for. A credible
+  separation needs n≈100+ = ~5 days of Letta alone (Zep infeasible even at n=1) → requires a fast
+  hosted endpoint, not local hardware. **Terminal finding (now statistically closed): CB posts no
+  credible accuracy win over Letta on either variant** (clear oracle loss; within-noise `_s` tie),
+  beats/ties Mem0+Zep, leads all on cost. Clause 1 is a provisioning + offline-capability task, not
+  an in-session tweak. Documented in harness `RESULTS_longmemeval.md` §"Why just complete the runs
+  would not credibly change this". No code changed; repos clean, gate green.
 - 2026-07-03 (later⁷) — **Track G cost: token→$ pricing (reviewer PASS).** `Pricing` dataclass +
   `CuratedBrain(pricing=)` → `metrics()["cost"]` reports `estimated_usd`/`usd_per_query` from the
   metered hot-path tokens (embeddings + served context); makes the DONE-clause "≤ its cost"
