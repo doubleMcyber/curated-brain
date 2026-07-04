@@ -35,6 +35,8 @@ scale = ["hnswlib>=0.7"]
 mcp = ["mcp>=1.0"]
 # LangChain Retriever (curated_brain/langchain.py) to drop into any retrieval chain/agent.
 langchain = ["langchain-core>=0.3"]
+# LlamaIndex Retriever (curated_brain/llama_index.py) to drop into any LlamaIndex query engine.
+llama-index = ["llama-index-core>=0.11"]
 
 [project.scripts]
 curated-brain-mcp = "curated_brain.mcp_server:main"
@@ -61,7 +63,7 @@ python_version = "3.11"
 # Any — scoped per-module so a typo'd *internal* import is still flagged as a real error.
 [[tool.mypy.overrides]]
 module = ["torch.*", "transformers.*", "sentence_transformers.*", "hnswlib", "mcp.*",
-          "langchain_core.*"]
+          "langchain_core.*", "llama_index.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

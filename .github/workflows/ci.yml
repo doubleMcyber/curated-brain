@@ -38,7 +38,7 @@ jobs:
         run: pytest -q
 
   integrations:
-    name: adoption extras (mcp + langchain + scale)
+    name: adoption extras (mcp + langchain + llama-index + scale)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,19 +50,20 @@ jobs:
 
       # Install the adoption surfaces' extras so their tests RUN instead of skipping. The
       # [local] model stack is intentionally excluded (heavy; its tests stay behind CB_LIVE).
-      - name: Install (dev + mcp + langchain + scale)
+      - name: Install (dev + mcp + langchain + llama-index + scale)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,mcp,langchain,scale]"
+          pip install -e ".[dev,mcp,langchain,llama-index,scale]"
 
-      # Guard: with the extras present, the MCP / LangChain / ANN suites must EXECUTE, not skip
-      # — otherwise a regression in those shipped features would pass CI unnoticed.
+      # Guard: with the extras present, the MCP / LangChain / LlamaIndex / ANN suites must
+      # EXECUTE, not skip — otherwise a regression in those shipped features would pass CI.
       - name: Integration tests must run (zero skips)
         run: |
           set -o pipefail
-          pytest tests/test_mcp.py tests/test_langchain.py tests/test_ann.py -q -rs | tee /tmp/integ.txt
+          pytest tests/test_mcp.py tests/test_langchain.py tests/test_llama_index.py \
+            tests/test_ann.py -q -rs | tee /tmp/integ.txt
           if grep -q "skipped" /tmp/integ.txt; then
-            echo "::error::an adoption extra is missing — MCP/LangChain/ANN tests skipped in CI"
+            echo "::error::an adoption extra is missing — MCP/LangChain/LlamaIndex/ANN tests skipped in CI"
             exit 1
           fi
 
