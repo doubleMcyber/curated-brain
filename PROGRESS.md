@@ -556,6 +556,19 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁶) — **Track H security COMPLETE: entire untrusted-restore path now fails loud
+  (reviewer PASS).** Closed the three loader surfaces the prior reviewer flagged + two more it
+  found: `VectorTier.load` (VectorRecord field validation + int-key/list-meta checks),
+  `SurpriseGate.from_dict` (all-8-keys + numbers-not-bool), `EntityResolver.from_dict` (dict +
+  list-of-pairs), plus top-level `config` (dict) and `asserted_texts` (list) in `_validate_snapshot`.
+  Every restore-path loader now raises a clear ValueError on malformed/hostile input instead of an
+  opaque KeyError/TypeError/AttributeError. +6 tests (177 passed), ruff+mypy clean. **No-op on
+  valid snapshots**: byte-identical round-trip through every loader (verified with multi-token
+  entities + poisoned resolver tokens) + AC-9 hash 673a25c7 unchanged. Reviewer PASS (probed each
+  loader's malformed-input classes; confirmed int(seen/stored) + bool-rejection are harmless on
+  valid input; happy path untouched). Track H (fuzz + soak + security) is now substantively done:
+  seeded fuzz + 5k soak (earlier) + untrusted-blob restore hardening (now). Does NOT address
+  clause 1 (Letta) — that remains blocked as documented; this advances the PRODUCTIONIZE/H track.
 - 2026-07-03 (later⁵) — **Track H security: hardened `restore()` against untrusted snapshots
   (reviewer PASS).** Pivoted off the (closed) Letta-gap fix loop to a real, non-benchmark
   production gap the audit flagged: `restore()` splatted untrusted JSON into `EpisodicRecord(**d)`

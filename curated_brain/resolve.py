@@ -129,12 +129,22 @@ class EntityResolver:
 
     @classmethod
     def from_dict(cls, d: dict) -> EntityResolver:
+        # Untrusted snapshot: fail with a clear error, not an opaque AttributeError/TypeError.
+        if not isinstance(d, dict):
+            raise ValueError(f"resolver snapshot must be an object, got {type(d).__name__}")
         r = cls()
         r._full = set(d.get("full", []))
         r._singletons = set(d.get("singletons", []))
         for attr, key in (("_given", "given"), ("_surname", "surname")):
             index = getattr(r, attr)
-            for tok, val in d.get(key, []):
+            entries = d.get(key, [])
+            if not isinstance(entries, list):
+                raise ValueError(f"resolver '{key}' must be a list")
+            for pair in entries:
+                try:
+                    tok, val = pair
+                except (TypeError, ValueError) as e:
+                    raise ValueError(f"malformed resolver '{key}' entry: {e}") from e
                 index[tok] = _AMBIGUOUS if val is None else val
         return r
 

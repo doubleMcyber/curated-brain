@@ -8,7 +8,7 @@ a dot product. Vectors serialize as exact hex bytes, keeping snapshots byte-dete
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -180,6 +180,12 @@ class VectorRecord:
         return [normalize(e) for e in self.entities]
 
 
+_VECTOR_RECORD_FIELDS = frozenset(VectorRecord.__dataclass_fields__)
+_VECTOR_RECORD_REQUIRED = frozenset(
+    n for n, f in VectorRecord.__dataclass_fields__.items()
+    if f.default is MISSING and f.default_factory is MISSING)
+
+
 class VectorTier:
     """Embedded records + metadata-filtered ANN search (PRD §7 step 2)."""
 
@@ -308,8 +314,28 @@ class VectorTier:
         return out
 
     def load(self, d: dict) -> None:
+        # Untrusted snapshot: validate before splatting into VectorRecord(**fields).
+        if not isinstance(d, dict) or not isinstance(d.get("next"), int) \
+                or not isinstance(d.get("meta"), list):
+            raise ValueError("malformed vector tier snapshot: bad next/meta")
+        meta: dict[int, VectorRecord] = {}
+        for pair in d["meta"]:
+            try:
+                k, fields = pair
+                key = int(k)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"malformed vector meta entry: {e}") from e
+            if not isinstance(fields, dict):
+                raise ValueError(f"vector meta[{key}] must be an object")
+            extra = set(fields) - _VECTOR_RECORD_FIELDS
+            if extra:
+                raise ValueError(f"vector meta[{key}] has unknown fields {sorted(extra)}")
+            missing = _VECTOR_RECORD_REQUIRED - set(fields)
+            if missing:
+                raise ValueError(f"vector meta[{key}] missing required fields {sorted(missing)}")
+            meta[key] = VectorRecord(**fields)
         self._next = d["next"]
-        self.meta = {int(k): VectorRecord(**fields) for k, fields in d["meta"]}
+        self.meta = meta
         if d.get("index"):
             self.index = BruteForceIndex.from_dict(d["index"])
         else:

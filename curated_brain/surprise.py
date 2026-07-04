@@ -56,10 +56,22 @@ class SurpriseGate:
                 "theta_max": self.theta_max, "lr": self.lr, "reinforce_sim": self.reinforce_sim,
                 "seen": self.seen, "stored": self.stored}
 
+    _KEYS = ("budget", "theta", "theta_floor", "theta_max", "lr", "reinforce_sim",
+             "seen", "stored")
+
     @classmethod
     def from_dict(cls, d: dict) -> SurpriseGate:
+        # Untrusted snapshot: fail with a clear error, not an opaque KeyError/TypeError.
+        if not isinstance(d, dict):
+            raise ValueError(f"gate snapshot must be an object, got {type(d).__name__}")
+        missing = [k for k in cls._KEYS if k not in d]
+        if missing:
+            raise ValueError(f"gate snapshot missing keys {missing}")
+        if not all(isinstance(d[k], (int, float)) and not isinstance(d[k], bool)
+                   for k in cls._KEYS):
+            raise ValueError("gate snapshot values must all be numbers")
         g = cls(budget=d["budget"], theta0=d["theta"], theta_floor=d["theta_floor"],
                 theta_max=d["theta_max"], lr=d["lr"], reinforce_sim=d["reinforce_sim"])
-        g.seen = d["seen"]
-        g.stored = d["stored"]
+        g.seen = int(d["seen"])
+        g.stored = int(d["stored"])
         return g

@@ -85,6 +85,12 @@ def _validate_snapshot(state: dict) -> None:
     for key in ("structured", "vector"):
         if key in state and not isinstance(state[key], (list, dict)):
             raise ValueError(f"snapshot '{key}' has wrong type {type(state[key]).__name__}")
+    if "config" in state and not isinstance(state["config"], dict):
+        raise ValueError(f"snapshot 'config' must be an object, "
+                         f"got {type(state['config']).__name__}")
+    if "asserted_texts" in state and not isinstance(state["asserted_texts"], list):
+        raise ValueError(f"snapshot 'asserted_texts' must be a list, "
+                         f"got {type(state['asserted_texts']).__name__}")
 
 
 def _validate_fact(fact) -> None:

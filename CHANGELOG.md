@@ -57,10 +57,11 @@ the project is pre-1.0, so the API may still change.
   allocation): `restore()` validates it is UTF-8 JSON of an object with an integer `counter` and
   well-formed `episodic`/`structured` records (no injected/unknown fields, all required fields
   present); `BruteForceIndex.from_dict` enforces each vector hex is exactly `dim*16` chars,
-  bounding `np.frombuffer` allocation before it happens; `StructuredTier.load` gets the same
-  fact-field validation. No behavior change on valid snapshots (byte-identical round-trip; AC-9
-  determinism hash unchanged). Follow-ups noted: the same fail-loud treatment for
-  `VectorTier.load`/`SurpriseGate.from_dict`/`EntityResolver.from_dict`.
+  bounding `np.frombuffer` allocation before it happens. The full restore path now fails loud:
+  `StructuredTier.load`, `VectorTier.load`, `SurpriseGate.from_dict`, `EntityResolver.from_dict`,
+  and the top-level `config`/`asserted_texts` fields all reject malformed input with clear
+  `ValueError`s instead of opaque `KeyError`/`TypeError`/`AttributeError`. No behavior change on
+  valid snapshots (byte-identical round-trip through every loader; AC-9 determinism hash unchanged).
 - **Fixed a red CI type gate**: `retrieval.py` `fuse` had immutable defaults under mutable
   annotations; `mypy` (a CI step) now passes and is in the documented gate.
 

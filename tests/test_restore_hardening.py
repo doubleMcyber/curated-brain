@@ -8,7 +8,10 @@ import json
 import pytest
 
 from curated_brain.backend import CuratedBrain
-from curated_brain.vector import BruteForceIndex
+from curated_brain.fakes import DeterministicEmbedder
+from curated_brain.resolve import EntityResolver
+from curated_brain.surprise import SurpriseGate
+from curated_brain.vector import BruteForceIndex, VectorTier
 
 
 def _good_blob() -> bytes:
@@ -89,3 +92,43 @@ def test_structured_facts_with_injected_or_missing_field_raise():
     incomplete = {"counter": 0, "episodic": [], "structured": [{"id": "f"}]}
     with pytest.raises(ValueError, match="missing required fields"):
         cb.restore(json.dumps(incomplete).encode())
+
+
+def test_config_and_asserted_texts_wrong_type_raise():
+    cb = CuratedBrain(seed=0)
+    with pytest.raises(ValueError, match="'config' must be an object"):
+        cb.restore(json.dumps({"counter": 0, "episodic": [], "config": "oops"}).encode())
+    with pytest.raises(ValueError, match="'asserted_texts' must be a list"):
+        cb.restore(json.dumps({"counter": 0, "episodic": [], "asserted_texts": 123}).encode())
+
+
+def test_vector_tier_load_rejects_malformed():
+    vt = VectorTier(DeterministicEmbedder())
+    with pytest.raises(ValueError, match="bad next/meta"):
+        vt.load({"meta": []})  # no 'next'
+    with pytest.raises(ValueError, match="unknown fields"):
+        vt.load({"next": 0, "meta": [[0, {"rid": "x", "evil": "injected"}]]})
+    with pytest.raises(ValueError, match="missing required fields"):
+        vt.load({"next": 0, "meta": [[0, {"rid": "x"}]]})
+
+
+def test_surprise_gate_from_dict_rejects_malformed():
+    with pytest.raises(ValueError, match="missing keys"):
+        SurpriseGate.from_dict({"budget": 0.2})
+    with pytest.raises(ValueError, match="must be an object"):
+        SurpriseGate.from_dict("not a dict")
+    good = SurpriseGate().to_dict()
+    good["theta"] = "not a number"
+    with pytest.raises(ValueError, match="must all be numbers"):
+        SurpriseGate.from_dict(good)
+
+
+def test_entity_resolver_from_dict_rejects_malformed():
+    with pytest.raises(ValueError, match="must be an object"):
+        EntityResolver.from_dict(42)
+    with pytest.raises(ValueError, match="must be a list"):
+        EntityResolver.from_dict({"given": "not a list"})
+    # a valid resolver dict still round-trips
+    r = EntityResolver()
+    r.resolve_and_register("Erin Smith")
+    assert EntityResolver.from_dict(r.to_dict()).canonical("Erin") == "erin smith"
