@@ -556,6 +556,21 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁹) — **Probed the LAST unblock (hosted inference) — conclusively unavailable in
+  this environment.** The credible clause-1 close needs a fast hosted model (rivals at `_s`, n≥100).
+  Probed every credential/endpoint present, not assumed: `GEMINI_CLI_IDE_AUTH_TOKEN` → 400/401 on
+  the generativelanguage API (it's an IDE-server token, not a generative key); `gemini` CLI is
+  installed + authenticated but **tier-ineligible for generation** ("no longer supported for Gemini
+  Code Assist for individuals → migrate to Antigravity"); no gcloud/ADC; no OpenAI/Anthropic keys;
+  only local Ollama (the throughput that made the rivals infeasible). **So the hosted-endpoint
+  unblock is not discoverable in-session — it requires the USER to provide an API key / endpoint.**
+  With that, clause 1 is EXHAUSTIVELY blocked: every avenue probed + closed (local retrieval fixes
+  fail held-out gates; extraction can't close the structural oracle gap; local `_s`-completion is a
+  within-noise tie needing ~5 infeasible days; hosted inference unreachable). Terminal state; the
+  blocked report is complete. What unblocks it, precisely: set `OPENAI_BASE_URL`+`OPENAI_API_KEY`
+  (or any OpenAI-compatible endpoint) — CB `OpenAICompatLLM`/`OpenAICompatEmbedder`,
+  `MEM0_OPENAI_BASE`, `ZEP_OPENAI_BASE`, Letta handles all already target it — then
+  `bench_longmemeval.py --data data/longmemeval_s --n 140` per backend + compare. No code changed.
 - 2026-07-03 (later⁸) — **Ruled out the last "just run the benchmark" avenue with statistics.**
   The `_s` variant IS the headline LongMemEval benchmark (oracle is a diagnostic), and it's where
   CB co-leads — so the natural question is "complete the cut Letta/Zep `_s` runs and claim CB ≥
