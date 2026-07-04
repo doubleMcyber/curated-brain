@@ -497,6 +497,20 @@ configs on a hosted endpoint — still endpoint-bound); Phase 5 reposition aroun
 owns (deterministic, auditable, offline, bi-temporal + provenance).
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later) — **Second attempt at the Letta gap, reverted: the entity-filter change is a
+  TRADEOFF, not a free fix.** Implemented the properly-scoped LIBRARY fix + unit test:
+  `VectorTier.search` no longer excludes records with NO entity tags under an entity filter (so
+  raw conversation turns stay retrievable when the planner resolves an entity — architecturally
+  correct in isolation; gate went 164→165 passed). BUT it **broke the AC-9 byte-identical
+  invariant**: diagnostic-harness determinism hash 673a25c7→a9c72df2 and precision 0.79→0.76 —
+  the synthetic suite *does* contain untagged raw turns, so surfacing them is a real
+  recall↑/precision↓ tradeoff, and that held-out precision regression is the tell. Reverted;
+  hash + gate + tree confirmed restored (673a25c7…, 164 passed, clean). **Lesson for next
+  session:** the entity-filter behavior IS the right lever for single-session-assistant, but it
+  needs a precision-preserving design (e.g. tag raw turns with mentioned entities at ingest so
+  scoping still works, OR soft-boost instead of hard-exclude) evaluated OFFLINE on held-out
+  data — not an in-session flip validated by whether it beats Letta. Two documented reverts now
+  confirm: closing clause 1 needs deliberate capability work, not benchmark patching.
 - 2026-07-03 — **DONE-clause status closed out honestly; declined in-session benchmark tuning.**
   Evidenced clauses 2 & 3 fresh: `pip install .` into a clean venv imports + write/answer works
   (v0.1.0), LICENSE/README/CHANGELOG/CONTRIBUTING/CI/pyproject all present, gate green (164
