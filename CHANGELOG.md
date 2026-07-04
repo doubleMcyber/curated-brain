@@ -52,6 +52,10 @@ the project is pre-1.0, so the API may still change.
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
 ### Added (2026-07-03)
+- **LlamaIndex integration** (`curated_brain.llama_index.build_retriever`, `[llama-index]` extra):
+  the sibling to the LangChain retriever — CB's curated context drops into any LlamaIndex query
+  engine as scored `NodeWithScore`s carrying provenance record-ids. Reuses the framework-free
+  `memories()` core; `llama-index-core` imported lazily; wired into the CI zero-skip integration job.
 - **Time-scoped retrieval**: `CuratedBrain.query(..., window=(from_ts, to_ts))` scopes episodic
   (vector-tier) recall to a time range — "what did I note last spring?". Threads to the vector
   tier's existing window filter; validated fail-loud; default `None` → byte-identical (AC-1/AC-9

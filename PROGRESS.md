@@ -556,6 +556,16 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later¹³) — **Track E: LlamaIndex integration (reviewer-pending — trivial mirror of
+  the reviewed LangChain adapter).** `curated_brain.llama_index.build_retriever` wraps a
+  CuratedBrain as a LlamaIndex `BaseRetriever` (scored `NodeWithScore`s + provenance record-ids),
+  reusing the framework-free `memories()` core; `llama-index-core` lazy (`[llama-index]` extra,
+  not in default gate); import hygiene verified (not loaded at `import curated_brain`); wired into
+  the CI zero-skip integration job (+ mypy override + README section). Live end-to-end verified
+  (write raw text → retrieve curated node). +2 tests (192 passed), ruff+mypy clean. Broadens the
+  adoption surface (the two dominant LLM frameworks now both covered) — a clean, non-benchmark-
+  motivated SHIP-track improvement; does NOT address clause 1 (Letta), still blocked on a
+  user-provided hosted endpoint.
 - 2026-07-03 (later¹²) — **Capability: time-scoped retrieval `query(window=(from,to))` (reviewer
   PASS).** A genuine memory capability (scope episodic recall to a time range — "what did I note
   last spring?"), exposing the vector tier's existing but unwired `window` filter through the

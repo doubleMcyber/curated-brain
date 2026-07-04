@@ -182,6 +182,16 @@ retriever.cb.write("Erin lives in Vienna.", session_id="s", timestamp=0.0)
 docs = retriever.invoke("Where does Erin live?")       # standard LangChain Runnable API
 ```
 
+## Use it from LlamaIndex
+
+```python
+from curated_brain.llama_index import build_retriever  # pip install -e ".[llama-index]"
+
+retriever = build_retriever()                          # heuristic extractor: raw text in
+retriever.cb.write("Erin lives in Vienna.", session_id="s", timestamp=0.0)
+nodes = retriever.retrieve("Where does Erin live?")    # standard LlamaIndex Retriever API
+```
+
 ## How it works
 
 | Layer | Module |
