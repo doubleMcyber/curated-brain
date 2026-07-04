@@ -556,6 +556,24 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁴) — **Fourth Letta-gap attempt (ingest-time entity-mention tagging), Gate A
+  REJECTED — and it converges to a FUNDAMENTAL conclusion.** The genuinely-different approach
+  from the roadmap #1(c): tag each stored record with the resolver entities its text MENTIONS
+  (precise by construction — only surfaces records naming the entity), a library change validatable
+  on the diagnostic suite. Gate B green (164, mypy clean). Gate A: precision **0.79→0.76** — and
+  it produced the EXACT same hash + precision (a9c72df2 / 0.76) as the "untagged eligible" revert,
+  proving that on realistic data, scoping a record to everyone it mentions is behaviorally
+  equivalent to admitting untagged content: **broader entity recall inescapably trades diagnostic
+  precision.** Reverted; gate + mypy green, AC-9 hash restored. **CONCLUSION (4 distinct
+  implementations, all held-out-rejected):** the single-session-assistant recall gain and tight
+  diagnostic precision are in genuine tension — there is no clean retrieval tweak that gets the
+  recall without the precision cost. Combined with the oracle gap being STRUCTURAL (Letta wins by
+  full-context reading when history fits), the honest verdict is firm: **the unconditional
+  "CB ≥ Letta" clause is not achievable through in-session retrieval changes.** Real closes need a
+  different axis (better extraction so assistant facts become STRUCTURED, not episodic; or a
+  hosted-model rerun where the regime shifts) — deliberate offline work, not benchmark patching.
+  Per the global contract's 3-strikes rule (now 4), the fix loop is CLOSED; the blocked report is
+  this + the forward roadmap above.
 - 2026-07-03 (later³) — **Executed the planning roadmap's #1 item (soft entity scoping) under the
   firewall; Gate A REJECTED it — third held-out-validated rejection.** Implemented the
   precision-preserving design exactly (entity_soft two-pass fill, unit-tested: no-op when scoping
