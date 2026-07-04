@@ -4,11 +4,13 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-02 (Track D EXECUTED — LongMemEval vs Mem0/Zep/Letta on a shared local
-model: CB decisively beats Zep on accuracy, statistically ties Mem0 on accuracy while beating
-both on cost; Letta beats CB on this oracle variant at ~8× cost → DONE clause 1 not yet met;
-`_s`-variant run is next. Also: red-team improvement plan phases 0/1/2/3a/3b/5 all DONE,
-6 reviewed commits) · Branch: `claude/heuristic-extractor`
+Last updated: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
+oracle Letta 0.471 > CB 0.261 ~ Mem0 0.203 > Zep 0.065; `_s` CB 0.167 = Mem0 0.167, Letta
+0.083(partial n=12, ties CB 1/12 on the shared questions), Zep DNF, CB 8–24× cheaper. CB ≥ Mem0
+and CB ≥ Zep hold both variants; CB never posts an accuracy win over Letta (loses oracle, ties
+shared `_s`) → unconditional DONE clause 1 NOT met, but CB is accuracy co-leader + cost leader
+in the context-overflow regime. Red-team plan phases 0/1/2/3a/3b/5 all DONE)
+· Branch: `claude/heuristic-extractor`
 Published: `github.com/doubleMcyber/curated-brain` (public; `main` = the 21 build commits).
 **Active work:** preliminary benchmark on the user's harness `doubleMcyber/longitudinal-memory-eval-harness`
 (runs fully offline) — **RAN + IMPROVED 2026-06-19.** After 3 general-capability levers (multi-entity
@@ -516,6 +518,25 @@ owns (deterministic, auditable, offline, bi-temporal + provenance).
   fixed and re-run frozen. Full write-up: harness `RESULTS_longmemeval.md`. One CB core
   change shipped during smoke (pre-freeze): backstop reserves half the context for vector
   recall (bit-identical on the diagnostic harness, hash 673a25c7…).
+- 2026-07-03 — **Track D _s-variant (context-overflow regime) DONE — the decisive test.**
+  `longmemeval_s`: mean 50 sessions / 494 turns / ~490k chars per question (overflows the 7B's
+  32k window — the regime a memory layer actually targets). n=24 seed 42, same shared
+  model/embedder/judge. **CB 0.167 (24/24, 3.1 min/q) EXACT-TIES Mem0 0.167 (24/24, 25.1 min/q)
+  — CB 8× cheaper; Letta 0.083 (n=12 partial, cut per pre-registered rule at ~70 min/q) ties
+  CB 1/12 on the questions it finished — its win is completeness+cost, not accuracy; Letta
+  COLLAPSES from its oracle 0.471 once history can't fit context (Letta-vs-itself, unambiguous);
+  Zep DNF (0 questions in ~2 h; ~200 graphiti LLM calls/question infeasible on a local 7B).** So the
+  oracle picture INVERTS at scale: Letta's win was full-context reading, not memory. Combined
+  verdict: CB ≥ Mem0 (accuracy tie both variants, always cheaper) and CB ≥ Zep hold; CB ≥ Letta
+  holds only at `_s` → unconditional clause NOT met, but CB is the accuracy co-leader + runaway
+  cost leader in the fits-nowhere regime. Rival-infra work this session: Letta stood up
+  Docker-free (pgserver+pgvector), its SDK default timeout raised to 1800 (first `_s` letta run
+  was all-timeout — archived .bak); Mem0 empty-extraction embed crash patched (archived .bak);
+  Zep/Graphiti Kuzu FTS indexes hand-created; episode truncation 8k→24k for `_s`. Three failed
+  attempts archived for audit, two legs disclosed partials, all in harness `RESULTS_longmemeval.md`.
+  CB gate stays green (164 passed); no CB tuning against any of these numbers (frozen). **Next
+  lever to overtake Letta at `_s`: CB temporal-reasoning (0.0 — needs date arithmetic over
+  retrieved memories) + preference paths.**
 - 2026-07-02 — **Phase 5 repositioning (docs; reviewer PASS) — improvement-plan complete on
   the local axis.** README now leads with the four properties CB verifiably owns
   (deterministic/replayable, bi-temporal + provenance, offline-capable, hard isolation +

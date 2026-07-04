@@ -60,16 +60,23 @@ every category. Caveats that remain: the scorer is a closed-set reader over the 
 vocabulary, and the corpus phrasing is template-generated — this validates the architecture on
 in-distribution text, not open-domain superiority.
 
-**Preliminary external result** (see Benchmark below): on our own companion diagnostic harness
-(same author as this library — offline and deterministic, but **not** an independent benchmark),
-Curated Brain is the **strongest backend on precision, contradiction-resolution, staleness, cost,
-and long-range recall** vs the harness's RAG references (naive/semantic/temporal RAG), trailing
-the best only by **0.04 on overall recall** (which, at suite size n≈25, is a single query).
+**External benchmark — LongMemEval vs Mem0 / Letta / Zep** (2026-07-03; see Benchmark below).
+Every system ran on the same local model (`qwen2.5:7b`) and embedder. The result is
+**regime-split**: when the conversation history *fits* the model's context (oracle variant),
+**Letta wins** (0.471 vs CB 0.261) by reading transcripts directly; when history *overflows*
+context (`_s` variant — what a memory layer is for), **CB ties the best system (0.167, tied
+with Mem0) at 8–24× lower cost per question**, Letta drops to ~0.083 (a disclosed partial that
+ties CB on the 12 questions it finished), and Zep can't finish a question. **CB ≥ Mem0 and
+CB ≥ Zep hold on both variants; CB never posts an accuracy win over Letta** (loses oracle, ties
+the shared `_s` subset) — so the unconditional "beats all three" claim is **not** met, but CB
+is the accuracy co-leader and cost leader in the regime that matters. Local 7B judge (not
+GPT-4o); numbers internally comparable, not leaderboard-comparable.
 
-**Not done yet** (tracked in `PROGRESS.md`): the head-to-head against the **named systems
-Mem0 / Letta / Zep** (needs a shared LLM endpoint — *not yet run*; the result above is vs RAG
-references only); production scale (real ANN at 10⁵–10⁶ records); packaging to PyPI;
-framework/MCP integrations. Nothing here claims to beat the named systems until that runs.
+**Not done yet** (tracked in `PROGRESS.md`): closing CB's temporal-reasoning and preference
+gaps (both ~0 at `_s`) to actually overtake Letta there; a hosted-model rerun with the official
+GPT-4o judge at larger n (and Letta/Zep run to completion). The strongest honest claim today is
+"ties or beats Mem0/Zep everywhere and leads all three on cost; competitive with Letta —
+behind it when history fits context, level on the questions Letta could finish once it doesn't."
 
 ## Benchmark (preliminary — our own diagnostic suite, not an independent benchmark)
 
