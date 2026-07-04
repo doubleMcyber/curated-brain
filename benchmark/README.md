@@ -55,13 +55,16 @@ an externally-authored benchmark. Full per-category breakdown, the `bge` real-em
 and the provenance audit live in the harness repo's
 [`RESULTS_curated_brain.md`](https://github.com/doubleMcyber/longitudinal-memory-eval-harness/blob/claude/curated-brain-adapter/RESULTS_curated_brain.md).
 
-## Result — LongMemEval vs ALL THREE named rivals (2026-07-02, first full run)
+## Result — LongMemEval vs ALL THREE named rivals (2026-07-02/03, first full run)
 
-The named-rival run finally executed locally (ollama + qwen2.5:7b for every system's LLM
-calls, answer generation, and judging; same nomic embedder for all — the memory layer is the
-only variable). Dataset: **LongMemEval (externally authored)**, oracle variant, stratified
-n=138 (seed 42). Full protocol, per-type table, disclosures:
+The named-rival run executed locally on both variants (ollama + qwen2.5:7b for every system's
+LLM calls, answer generation, and judging; same nomic embedder for all — the memory layer is
+the only variable). **LongMemEval is externally authored** (`xiaowu0162/longmemeval`), unlike
+the diagnostic suite above. Full protocol, per-type tables, McNemar/CI, and every disclosure:
 [`RESULTS_longmemeval.md`](https://github.com/doubleMcyber/longitudinal-memory-eval-harness/blob/claude/curated-brain-adapter/RESULTS_longmemeval.md).
+
+**oracle** variant (~2 evidence sessions/question — history *fits* the model's context;
+n=138 stratified seed 42):
 
 | system | accuracy | wall time |
 |---|---|---|
@@ -70,19 +73,29 @@ n=138 (seed 42). Full protocol, per-type table, disclosures:
 | Mem0 2.0.7 | 0.203 | 77 min |
 | Zep (Graphiti+Kuzu) | 0.065 | 254 min |
 
-**Stated plainly:** Curated Brain **decisively beats Zep on accuracy** (p<0.0001) and beats
-both Mem0 and Zep on cost; vs **Mem0** its accuracy edge (0.261 vs 0.203) is **within noise
-at n=138** (paired McNemar p=0.24 — a statistical tie on accuracy, a clear cost win).
-**Letta beats Curated Brain on accuracy** (0.471 vs 0.261, p=0.0002) at ~8× the wall time —
-so the full "≥ each of Mem0/Letta/Zep" claim is **NOT met on this variant**. Key context: with only
-~2 evidence sessions per oracle question, Letta's agent answers with the transcripts
-effectively still in its context window (agentic full-context reading, the accuracy ceiling
-memory systems trade against); the `_s` variant (~115k-token haystacks that overflow any
-context) is the follow-up setting where retrieval quality, not context capacity, decides.
-CB is the strongest of all four on **knowledge-update** (belief revision — the bi-temporal
-supersede design working as intended); its measured weak spots are temporal reasoning and
-preference summarization. Judge is the shared local model, not the official GPT-4o —
-numbers are internally comparable, not leaderboard-comparable.
+**`_s`** variant (~50 sessions / ~490k chars/question — history *overflows* any context;
+n=24 seed 42; two rivals are disclosed partials — see the write-up):
+
+| system | accuracy | cost/question | status |
+|---|---|---|---|
+| **Curated Brain** | **0.167** | **3.1 min** | complete (n=24) |
+| Mem0 2.0.7 | **0.167** | 25.1 min | complete (n=24) |
+| Letta 0.16.8 | 0.083 (1/12) | 70.4 min | partial — cut at n=12; **ties CB 1/12 on those** |
+| Zep (Graphiti+Kuzu) | — | >120 min | DNF (throughput) |
+
+**Stated plainly — the result is regime-split.** When the history *fits* context (oracle),
+**Letta wins** (0.471 vs CB 0.261, p=0.0002) — its agent reads the transcripts directly and
+its memory machinery barely engages; the unconditional "CB ≥ each rival" claim is **not met**.
+When the history *overflows* context (`_s` — the problem a memory layer exists to solve),
+**CB ties the best system (0.167, exact tie with Mem0) at 8–24× lower cost per question**;
+Letta drops to ~0.083 (a disclosed partial — cut at n=12, where it tied CB 1/12 each), and
+Zep can't finish a single question. Across both variants **CB ≥ Mem0** (accuracy tie, always
+cheaper) and **CB ≥ Zep** hold; **CB never posts an accuracy win over Letta** (it loses oracle,
+ties the `_s` questions Letta finished) — so the unconditional "CB ≥ each rival" is not met,
+though CB wins `_s` on completeness and cost. CB is the strongest of all four on **knowledge-update**
+(bi-temporal supersede) and cheapest everywhere; its weak spots are temporal reasoning and
+preference summarization. The judge is the shared local 7B, not the official GPT-4o — numbers
+are internally comparable, not leaderboard-comparable; `_s` n=24 is directional.
 
 ## Result — vs a named system (Mem0), preliminary and **mixed** (older, offline)
 
