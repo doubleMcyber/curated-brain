@@ -556,6 +556,20 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-03 (later⁵) — **Track H security: hardened `restore()` against untrusted snapshots
+  (reviewer PASS).** Pivoted off the (closed) Letta-gap fix loop to a real, non-benchmark
+  production gap the audit flagged: `restore()` splatted untrusted JSON into `EpisodicRecord(**d)`
+  / `Fact(**d)` and hex into `np.frombuffer` with no validation (opaque-crash + unbounded-alloc
+  surface). Added: UTF-8/JSON/object validation + `_validate_snapshot` (counter int; episodic
+  records reject injected/unknown fields, require all required fields); `BruteForceIndex.from_dict`
+  enforces vector hex == dim*16 chars (bounds allocation BEFORE frombuffer — verified via
+  tracemalloc by the reviewer: ~0 MB on a 40M-char hostile hex); same fact-field validation in
+  `StructuredTier.load`. +9 tests (173 passed), ruff+mypy clean. **No-op on valid snapshots**:
+  byte-identical round-trip + AC-9 diagnostic hash 673a25c7 unchanged. Reviewer PASS (probed every
+  malformed-input class, confirmed the alloc bound fires pre-frombuffer, verified happy path
+  untouched). Documented follow-ups: same fail-loud for VectorTier.load/SurpriseGate.from_dict/
+  EntityResolver.from_dict (lower priority). Advances the "credible/production-ready" goal on the
+  H track; does NOT address clause 1 (Letta), which remains blocked as documented.
 - 2026-07-03 (later⁴) — **Fourth Letta-gap attempt (ingest-time entity-mention tagging), Gate A
   REJECTED — and it converges to a FUNDAMENTAL conclusion.** The genuinely-different approach
   from the roadmap #1(c): tag each stored record with the resolver entities its text MENTIONS

@@ -64,9 +64,32 @@ class BruteForceIndex:
 
     @classmethod
     def from_dict(cls, d: dict) -> BruteForceIndex:
-        idx = cls(d["dim"])
-        for k, hexv in d["items"]:
-            idx._vecs[int(k)] = np.frombuffer(bytes.fromhex(hexv), dtype=np.float64)
+        try:
+            dim = int(d["dim"])
+            items = d["items"]
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"malformed vector index snapshot: {e}") from e
+        if dim < 0 or not isinstance(items, list):
+            raise ValueError("malformed vector index snapshot: bad dim/items")
+        idx = cls(dim)
+        # A valid vector is EXACTLY dim float64s = dim*8 bytes = dim*16 hex chars. Enforcing it
+        # rejects corruption AND bounds allocation from a hostile blob (an oversized hex string
+        # can't force a giant np.frombuffer) — the restore path takes untrusted bytes.
+        want = dim * 16
+        for pair in items:
+            try:
+                k, hexv = pair
+                key = int(k)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"malformed vector index item: {e}") from e
+            if not isinstance(hexv, str) or len(hexv) != want:
+                raise ValueError(
+                    f"vector for key {key!r} has {len(hexv) if isinstance(hexv, str) else '?'} "
+                    f"hex chars, expected {want} (dim {dim})")
+            try:
+                idx._vecs[key] = np.frombuffer(bytes.fromhex(hexv), dtype=np.float64)
+            except ValueError as e:
+                raise ValueError(f"vector for key {key!r} is not valid hex: {e}") from e
         return idx
 
 

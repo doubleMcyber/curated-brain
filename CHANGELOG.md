@@ -51,6 +51,19 @@ the project is pre-1.0, so the API may still change.
   comparison is n=3 and mixed (answer ties on plain recall; provenance-metric caveats apply).
   Not yet the full named-rival claim — the doc states the exact endpoint/throughput needed.
 
+### Security (Track H, 2026-07-03)
+- **Hardened `restore()`/`load()` against untrusted snapshots.** A malformed or hostile blob now
+  fails with a clear `ValueError` instead of an opaque `KeyError`/`TypeError` (or a large
+  allocation): `restore()` validates it is UTF-8 JSON of an object with an integer `counter` and
+  well-formed `episodic`/`structured` records (no injected/unknown fields, all required fields
+  present); `BruteForceIndex.from_dict` enforces each vector hex is exactly `dim*16` chars,
+  bounding `np.frombuffer` allocation before it happens; `StructuredTier.load` gets the same
+  fact-field validation. No behavior change on valid snapshots (byte-identical round-trip; AC-9
+  determinism hash unchanged). Follow-ups noted: the same fail-loud treatment for
+  `VectorTier.load`/`SurpriseGate.from_dict`/`EntityResolver.from_dict`.
+- **Fixed a red CI type gate**: `retrieval.py` `fuse` had immutable defaults under mutable
+  annotations; `mypy` (a CI step) now passes and is in the documented gate.
+
 ### Added (Phase-3b scale & tenancy, 2026-07-02)
 - **Namespacing** (`curated_brain.namespace.NamespacedMemory`): hard-isolated per-tenant
   stores (one CuratedBrain per namespace) — cross-tenant bleed is structurally impossible
