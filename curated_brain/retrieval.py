@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from curated_brain.models import Fact
@@ -108,8 +110,8 @@ def _recency(now: float, ts: float) -> float:
     return 0.5 ** (max(0.0, now - ts) / HALF_LIFE_SECONDS)
 
 
-def fuse(vhits, *, now: float, stale_rids: set[str] = frozenset(),
-         stale_pairs: list[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
+def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
+         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
          w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
     """Rank vector candidates by relevance × recency × importance, dropping any record that
     states a superseded value (supersede-filtering, PRD §7 step 3).

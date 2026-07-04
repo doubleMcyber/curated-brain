@@ -155,6 +155,7 @@ print(cb.answer_structured("Erin", "city"))   # -> "Vienna"
 ```bash
 pytest -q          # the gate: fast, offline, deterministic (real-model tests skip)
 ruff check .
+mypy curated_brain # type gate (also enforced in CI)
 CB_LIVE=1 pytest -q -k live   # opt in to the real-model tests (needs the [local] extra + a model)
 ```
 
