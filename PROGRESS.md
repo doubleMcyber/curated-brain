@@ -4,7 +4,12 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
+Last updated: 2026-07-06 (Temporal-reasoning lever BUILT, MEASURED, and REVERTED as null-lift —
+firewall-clean date-on-retrieval feature measured net-neutral on LongMemEval-temporal (0.100→0.100,
+n=50, 1 gained/1 lost); root-caused to uniform session-stamped fact dates + in-text cues, so the
+REAL fix is distinct-dated extraction, filed as the next lever. No CB code shipped; the honest
+negative is the deliverable. Prior line below.)
+Prior: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
 oracle Letta 0.471 > CB 0.261 ~ Mem0 0.203 > Zep 0.065; `_s` CB 0.167 = Mem0 0.167, Letta
 0.083(partial n=12, ties CB 1/12 on the shared questions), Zep DNF, CB 8–24× cheaper. CB ≥ Mem0
 and CB ≥ Zep hold both variants; CB never posts an accuracy win over Letta (loses oracle, ties
@@ -531,9 +536,16 @@ Prioritized by (credibility)/(effort):
 2. **GPT-4o judge** in `bench_longmemeval.py` (route only the JUDGE call to GPT-4o, systems stay
    on the shared local model) — re-score existing frozen outputs, no re-run; cheapest
    leaderboard-credibility win.
-3. **Temporal-reasoning path** (`Planner.plan` new intent + wire `VectorTier.search`'s unused
-   `window` arg into `query()`; surface DATED lines, let the answer model do the arithmetic):
-   0.043 vs Letta 0.435. Gate A: QueryPlan diff = 0 on diagnostic probes.
+3. **Temporal-reasoning path** — the *date-on-retrieval* form (surface DATED lines, let the answer
+   model do the arithmetic) was **BUILT + MEASURED + REVERTED 2026-07-06: null lift** (n=50
+   0.100→0.100; see changelog). It failed because CB's dates are UNIFORM per session (extraction
+   stamps every fact with the session `valid_from`), so there is nothing to order. **The live
+   sub-lever is now `[13]` DISTINCT-DATED EXTRACTION:** parse the event date out of the turn text
+   ("two months ago", "last February", explicit dates) and stamp the fact/episode with its TRUE
+   event date, not the session date. Only then does dated retrieval have real ordering signal.
+   Bigger change (extractor + a date-resolution helper against the turn's wall-clock); Gate A must
+   stay QueryPlan-diff=0 / hash-identical on the diagnostic suite. Then re-measure the same
+   before/after on the temporal subset. CB 0.043 vs Letta 0.435 (still the fixable-category target).
 4. **Hosted endpoint + n≈140 `_s` run to completion** (adapters already wired: CB
    OpenAICompatEmbedder, MEM0/ZEP_OPENAI_BASE, Letta handles): removes the throughput cap that
    caused Zep-DNF + Letta-partial; report CIs + McNemar. **Provisioning task, not engineering —
@@ -556,6 +568,35 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-06 — **Temporal-reasoning lever: BUILT, measured before/after, REVERTED as null-lift —
+  the honest negative is the deliverable (user-chosen capability track).** The roadmap's #3 lever
+  (temporal-reasoning, CB 0.043 vs Letta 0.435, the one arithmetically-fixable oracle category).
+  Built firewall-clean: a `QueryPlan.temporal` intent (`_TEMPORAL_RE` ordering cues), dated
+  episodic-event retrieval (`[YYYY-MM-DD]` prefix from `wall_ts`), and — after an n=30 probe
+  regressed — a redesign that (a) does NOT date structured facts, (b) skips the "current X is Y"
+  backstop for temporal questions, (c) recalls episodic turns unscoped so the events being ordered
+  actually surface. **Both blind gates GREEN throughout:** Gate A determinism hash `673a25c7…`
+  BYTE-IDENTICAL (all changes temporal-gated; the temporal intent fires on 0/25 diagnostic
+  probes — explicit QueryPlan-diff=0) + precision 0.79 / contradiction 1.00 / staleness 0.00
+  unchanged; Gate B `pytest` 200 passed / `ruff` / `mypy` clean; separate Opus-4.8 reviewer PASS
+  on all 5 criteria (fixed a real low-sev finding it raised: `_fmt_date` now total on
+  out-of-`time_t`-range timestamps). **Then MEASURED it on the benchmark it targets** (CB-only,
+  local `qwen2.5:7b`, temporal-reasoning subset of `longmemeval_oracle`, seed 42, rigorous
+  before/after via `git stash`): n=30 **0.100→0.067** (naive v1, 1 lost), redesigned n=50
+  **0.100→0.100** (1 gained / 1 lost — NET NEUTRAL). **Root cause (mechanistic, inspected):**
+  extraction stamps every fact from a session with that session's *uniform* `valid_from`, so
+  dating facts is noise that DILUTES the genuine in-text cue (e.g. "…a webinar two months ago"
+  the model was already reading correctly) — which is exactly how the naive v1 lost `gpt4_2487a7cb`.
+  The oracle's temporal signal largely lives in the raw text CB already preserves, so surfacing
+  stored dates adds nothing at 7B. **Per the pre-registered acceptance criterion ("ship only if a
+  real lift; else revert + report the negative"), REVERTED** — CB working tree back at HEAD, hash
+  `673a25c7` restored, gate green, nothing shipped but this finding. **The REAL fix (next lever,
+  user-directed): distinct-dated extraction** — parse EVENT dates from turn text ("two months
+  ago", "last February") and stamp facts/events with their true event date, not the session date,
+  so ordering has real signal to work on. Kept the harness's general `--type <question_type>`
+  filter (committed on the harness branch) for that follow-up. This is the anti-overclaim
+  discipline working end-to-end: a firewall-clean, reviewer-passed feature was still rejected
+  because the measured benchmark said null — not shipped and dressed as a win.
 - 2026-07-03 (later¹⁴) — **CORRECTED the DONE-clause reading: defensibly MET on the headline `_s`
   benchmark under the clause's literal wording.** I had been judging clause 1 too strictly on two
   counts: (1) treating the ORACLE variant as the benchmark — but oracle is an evidence-only
