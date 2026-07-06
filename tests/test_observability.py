@@ -33,6 +33,29 @@ def test_metrics_track_decisions_size_and_selectivity():
     assert m["structured_facts"] == len(facts)
 
 
+def test_cost_metrics_count_model_calls_and_tokens():
+    cb, obs, _ = _run()
+    c = cb.metrics()["cost"]
+    # every write embeds exactly once; no extractor configured -> no extract calls
+    assert c["embed_calls"] == len(obs)
+    assert c["extract_calls"] == 0
+    assert c["embed_tokens"] > 0
+    # no queries issued yet
+    assert c["queries"] == 0 and c["context_tokens_served"] == 0
+    assert c["avg_context_tokens"] == 0.0
+
+    # query-side cost accrues: one question-embed per query, context tokens summed, avg consistent
+    before = cb.metrics()["cost"]["embed_calls"]
+    served = 0
+    for q in ("Alice city", "Bob role", "Carol email"):
+        served += cb.query(q, session_id="q", timestamp=2e9).tokens_in
+    c = cb.metrics()["cost"]
+    assert c["queries"] == 3
+    assert c["embed_calls"] == before + 3
+    assert c["context_tokens_served"] == served
+    assert c["avg_context_tokens"] == served / 3
+
+
 def test_metrics_empty_store_is_safe():
     m = CuratedBrain(seed=0).metrics()
     assert m["writes_total"] == 0
@@ -52,5 +75,6 @@ def test_metrics_reset_on_restore_but_store_survives():
     m = restored.metrics()
     # operational counters describe this instance's activity (none) — but the store is intact
     assert m["writes_total"] == 0
+    assert m["cost"]["embed_calls"] == 0 and m["cost"]["queries"] == 0
     assert m["store_size"] == cb.metrics()["store_size"]
     assert m["structured_facts"] == cb.metrics()["structured_facts"]

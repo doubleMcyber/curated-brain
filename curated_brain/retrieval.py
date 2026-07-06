@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from curated_brain.models import Fact
@@ -43,13 +45,28 @@ class QueryPlan:
 
 class Planner:
     def plan(self, question: str, *, entities: set[str],
+             predicates: frozenset[str] = frozenset(),
+             relation_preds: frozenset[str] = frozenset(),
              session_ts: dict[int, float]) -> QueryPlan:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
 
-        preds = [p for p, kws in PRED_KEYWORDS.items() if any(k in toks for k in kws)]
-        rel = [p for p in preds if p in _RELATION_PREDS]
-        attr = [p for p in preds if p not in _RELATION_PREDS]
+        # Schema-driven FIRST: a predicate ACTUALLY STORED whose non-stop content tokens all
+        # appear in the question is ground truth about what the store can answer, so it
+        # outranks a keyword-mapped guess (e.g. stored "email address" beats the unstored
+        # keyword predicate "email" — previously the guess won and the lookup missed).
+        # Handles multi-word predicates; equivalent to single-token match for one-word ones.
+        preds = [p for p in sorted(predicates)
+                 if (pt := set(tokenize(p, drop_stop=True))) and pt <= toks]
+        for p, kws in PRED_KEYWORDS.items():
+            if p not in preds and any(k in toks for k in kws):
+                preds.append(p)
+        # A predicate is relational if hardwired OR if it was STORED with an entity-valued
+        # object (``relation_preds``) — generalizing multi-hop beyond the "manager" relation to
+        # any "X's <relation>'s <attr>" chain, without hardcoding a vocabulary.
+        is_rel = _RELATION_PREDS | relation_preds
+        rel = [p for p in preds if p in is_rel]
+        attr = [p for p in preds if p not in is_rel]
         hops: list[str] | None = None
         predicate: str | None = None
         if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
@@ -72,7 +89,8 @@ class Planner:
 def render_fact(plan: QueryPlan, fact: Fact) -> str:
     """A compact, citation-ready statement of the resolved fact for the context payload."""
     if plan.hops:
-        chain = " ".join([plan.entity, *plan.hops])
+        # render_fact is only called for a resolved (non-open-ended) plan, so entity is set.
+        chain = " ".join([plan.entity or "", *plan.hops])
         return f"{chain} is {fact.object}."
     if plan.as_of is not None:
         return f"{fact.subject}'s {fact.predicate} as of that time was {fact.object}."
@@ -92,13 +110,24 @@ def _recency(now: float, ts: float) -> float:
     return 0.5 ** (max(0.0, now - ts) / HALF_LIFE_SECONDS)
 
 
-def fuse(vhits, *, now: float, stale_objs: set[str], w_rel: float = 1.0,
+def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
+         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
          w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
-    """Rank vector candidates by relevance × recency × importance, dropping any record
-    that states a superseded value (supersede-filtering, PRD §7 step 3)."""
+    """Rank vector candidates by relevance × recency × importance, dropping any record that
+    states a superseded value (supersede-filtering, PRD §7 step 3).
+
+    Two-level staleness (see ``CuratedBrain._stale_filters``): ``stale_rids`` drops records
+    whose *asserted fact* is superseded (exact, provenance-linked); ``stale_pairs`` is the
+    fallback for records with no fact link — dropped only when the text contains BOTH the
+    subject and the full stale value (entity-scoped, so a record merely sharing words with
+    some other entity's stale value is never filtered).
+    The ``sim`` carried in from :meth:`VectorTier.search` is already the hybrid score."""
     items: list[FusedItem] = []
     for r, sim in vhits:
-        if stale_objs.intersection(tokenize(r.text)):
+        if r.rid in stale_rids:
+            continue
+        rtoks = set(tokenize(r.text))
+        if any(st <= rtoks and vt <= rtoks for st, vt in stale_pairs):
             continue
         score = w_rel * sim + w_rec * _recency(now, r.wall_ts) + w_imp * importance
         items.append(FusedItem(text=r.text, rid=r.rid, provenance={"session_id": r.session_id},

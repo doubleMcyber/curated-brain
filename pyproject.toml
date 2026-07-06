@@ -2,14 +2,44 @@
 name = "curated-brain"
 version = "0.1.0"
 description = "A persistent, self-organizing memory layer for LLM agents (frozen-model APIs only)."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "doubleMcyber", email = "fulgursol@gmail.com" }]
+keywords = ["llm", "memory", "agents", "rag", "bi-temporal", "vector-search", "retrieval"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = ["numpy>=1.24"]
 
+[project.urls]
+Homepage = "https://github.com/doubleMcyber/curated-brain"
+Source = "https://github.com/doubleMcyber/curated-brain"
+Issues = "https://github.com/doubleMcyber/curated-brain/issues"
+Changelog = "https://github.com/doubleMcyber/curated-brain/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.8"]
 # Real local-model providers (curated_brain/providers.py). Absent by default so the
 # offline gate runs on the deterministic fakes; install to un-fake the pipeline.
 local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
+# Real ANN backend (curated_brain/vector.py: HnswIndex) for scale; brute force stays default.
+scale = ["hnswlib>=0.7"]
+# MCP server (curated_brain/mcp_server.py) so any agent host can mount the memory layer.
+mcp = ["mcp>=1.0"]
+# LangChain Retriever (curated_brain/langchain.py) to drop into any retrieval chain/agent.
+langchain = ["langchain-core>=0.3"]
+# LlamaIndex Retriever (curated_brain/llama_index.py) to drop into any LlamaIndex query engine.
+llama-index = ["llama-index-core>=0.11"]
+
+[project.scripts]
+curated-brain-mcp = "curated_brain.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -18,9 +48,23 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["curated_brain*"]
 
+[tool.setuptools.package-data]
+curated_brain = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.mypy]
+files = ["curated_brain"]
+python_version = "3.11"
+
+# Only the optional heavy deps (unstubbed, not installed in the default gate) are treated as
+# Any — scoped per-module so a typo'd *internal* import is still flagged as a real error.
+[[tool.mypy.overrides]]
+module = ["torch.*", "transformers.*", "sentence_transformers.*", "hnswlib", "mcp.*",
+          "langchain_core.*", "llama_index.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100

@@ -12,6 +12,30 @@ def _tier() -> VectorTier:
     return VectorTier(DeterministicEmbedder())
 
 
+def test_search_is_hybrid_lexical_plus_semantic():
+    # With identical embeddings (cosine ties), the lexical term must decide the ranking —
+    # proving search fuses token-overlap with embedding similarity (general hybrid retrieval).
+    import numpy as np
+
+    class _ConstEmb:
+        model_id = "const"
+        dim = 4
+
+        def embed(self, text: str) -> np.ndarray:
+            return np.ones(4, dtype=float) / 2.0  # constant unit vector -> all cosines equal
+
+        def embed_batch(self, texts):
+            return np.stack([self.embed(t) for t in texts])
+
+    vt = VectorTier(_ConstEmb())
+    # insert the NON-matching record first (lower key): without the lexical term the cosine
+    # tie would break by key and rank it first, so the assertion only holds if hybrid works.
+    vt.add(rid="b", text="delta epsilon zeta", wall_ts=0.0, session_id="s")
+    vt.add(rid="a", text="alpha beta gamma", wall_ts=0.0, session_id="s")
+    hits = vt.search("alpha beta", k=2, t=1.0)
+    assert hits[0][0].rid == "a"  # lexical overlap floats the higher-key match above the tie
+
+
 def test_brute_force_index_ranks_by_cosine():
     emb = DeterministicEmbedder()
     idx = BruteForceIndex(emb.dim)

@@ -119,27 +119,37 @@ def score_categories(be, ds, last_ts) -> dict[str, float]:
             "C5": c5, "C6": c6, "stored": stored, "recall": c1}
 
 
-def run_harness(seed: int = 0):
+def run_harness(seed: int = 0, *, extraction: bool = False):
     """Run the full longitudinal protocol and return ``{backend_name: {category: score}}``.
 
-    Only CuratedBrain receives the extracted-triple metadata (it builds structure at write
-    time); the baselines log raw text, exactly as in PRD §9.1.
+    Default mode: only CuratedBrain receives the extracted-triple metadata (it builds
+    structure at write time); the baselines log raw text, exactly as in PRD §9.1. **Read
+    that mode for what it is** — CB alone gets gold triples, so it validates the
+    architecture wiring, not open-domain superiority (disclosed in the README).
+
+    ``extraction=True`` is the honest configuration: CuratedBrain ingests the SAME raw
+    text as every baseline (no ``metadata.fact`` spoon-feeding) and derives facts itself
+    via the deterministic :class:`~curated_brain.extraction.HeuristicExtractor`.
     """
     # imported here to avoid a circular import at module load
     from curated_brain.backend import CuratedBrain
     from curated_brain.baselines import LongContext, NaiveRAG, NoMemory
     from curated_brain.dataset import generate
+    from curated_brain.extraction import HeuristicExtractor
 
     ds = generate(seed=seed)
     last = ds.base_ts + (ds.n_sessions - 1) * ds.day
     k = len(ds.observations)
-    backends = {"curated": CuratedBrain(seed=seed), "naive": NaiveRAG(),
+    cb = (CuratedBrain(seed=seed, extractor=HeuristicExtractor()) if extraction
+          else CuratedBrain(seed=seed))
+    backends = {"curated": cb, "naive": NaiveRAG(),
                 "long_context": LongContext(), "no_memory": NoMemory()}
 
     raw: dict[str, dict] = {}
     for name, be in backends.items():
         for o in ds.observations:
-            meta = {"fact": o.fact} if (name == "curated" and o.fact) else None
+            meta = ({"fact": o.fact}
+                    if (name == "curated" and o.fact and not extraction) else None)
             be.write(o.content, session_id=o.session_id, timestamp=o.wall_ts, metadata=meta)
         if name == "curated":
             be.consolidate()  # the harness "sleeps" between the run and scoring

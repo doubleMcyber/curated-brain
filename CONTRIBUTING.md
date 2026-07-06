@@ -15,10 +15,11 @@ pip install -e ".[local]"   # optional: real local models (sentence-transformers
 ```bash
 pytest -q
 ruff check .
+mypy curated_brain
 ```
 
-Real-model tests are gated behind `CB_LIVE=1` and skip by default, so the gate runs offline
-and deterministically with no model weights or network.
+All three are enforced in CI. Real-model tests are gated behind `CB_LIVE=1` and skip by
+default, so the gate runs offline and deterministically with no model weights or network.
 
 ## Conventions
 

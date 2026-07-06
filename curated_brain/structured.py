@@ -14,13 +14,30 @@ byte-serializable for deterministic eval. A SQLite backend (PRD §5.3) is a drop
 
 from __future__ import annotations
 
+from dataclasses import MISSING
+
 from curated_brain.models import INF, Fact
 from curated_brain.util import normalize
+
+_FACT_FIELDS = frozenset(Fact.__dataclass_fields__)
+_FACT_REQUIRED = frozenset(n for n, f in Fact.__dataclass_fields__.items()
+                           if f.default is MISSING and f.default_factory is MISSING)
 
 
 class StructuredTier:
     def __init__(self) -> None:
         self.facts: list[Fact] = []
+        # (norm subject, norm predicate) -> facts, holding the SAME Fact objects as `facts`
+        # (so in-place supersede stays consistent). Derived, not serialized — `to_dict` emits
+        # only `facts`, so snapshots stay byte-identical (AC-1). Turns per-key reads O(1).
+        self._by_key: dict[tuple[str, str], list[Fact]] = {}
+        # (norm predicate, norm object) -> facts: the INVERSE index, so set queries ("who
+        # lives in Berlin?") don't scan every fact. Same shared-object discipline as _by_key.
+        self._by_obj: dict[tuple[str, str], list[Fact]] = {}
+
+    def _index(self, f: Fact) -> None:
+        self._by_key.setdefault((normalize(f.subject), normalize(f.predicate)), []).append(f)
+        self._by_obj.setdefault((normalize(f.predicate), normalize(f.object)), []).append(f)
 
     # ------------------------------------------------------------------ write path ---
     def assert_fact(self, *, fact_id: str, subject: str, predicate: str, object: str,
@@ -31,13 +48,33 @@ class StructuredTier:
         Returns ``(record, superseded)`` where ``record`` is the fact now considered
         current (an existing one if the value was merely reasserted) and ``superseded``
         is the fact that was closed, if any.
+
+        Out-of-order guard: a newcomer whose ``valid_from`` PRECEDES the open fact's is a
+        retroactive/historical assertion, not an update — it is inserted with its valid
+        interval closed at the open fact's ``valid_from`` instead of superseding forward.
+        (Previously it closed the open fact with ``valid_to < valid_from`` — an inverted
+        interval that silently corrupted every subsequent ``as_of`` query.)
         """
         key = (normalize(subject), normalize(predicate))
         superseded: Fact | None = None
-        for f in self.facts:
-            if f.is_open and (normalize(f.subject), normalize(f.predicate)) == key:
+        for f in self._by_key.get(key, []):  # only facts for this key (was: scan all facts)
+            if f.is_open:
                 if normalize(f.object) == normalize(object):
                     return f, None  # same value reasserted — no new row
+                if valid_from < f.valid_from:
+                    # Historical fact arriving late: record it as already-superseded by the
+                    # open fact (closed valid interval, open transaction interval — we only
+                    # learned it now, but it stopped being true when the open fact began).
+                    hist = Fact(
+                        id=fact_id, subject=subject, predicate=predicate, object=object,
+                        valid_from=valid_from, valid_to=f.valid_from,
+                        created_at=created_at, expired_at=INF,
+                        confidence=confidence, provenance=provenance or {},
+                        superseded_by=f.id,
+                    )
+                    self.facts.append(hist)
+                    self._index(hist)
+                    return f, hist  # the open fact stays current; the newcomer is history
                 # Conflict: close the old interval (valid + transaction time) and link.
                 f.valid_to = valid_from
                 f.expired_at = created_at
@@ -50,6 +87,7 @@ class StructuredTier:
             confidence=confidence, provenance=provenance or {},
         )
         self.facts.append(new)
+        self._index(new)
         return new, superseded
 
     # ------------------------------------------------------------------ read path ----
@@ -61,10 +99,7 @@ class StructuredTier:
         if a restored/corrupt store ever violates that invariant.
         """
         key = (normalize(subject), normalize(predicate))
-        open_matches = [
-            f for f in self.facts
-            if f.is_open and (normalize(f.subject), normalize(f.predicate)) == key
-        ]
+        open_matches = [f for f in self._by_key.get(key, []) if f.is_open]
         if not open_matches:
             return None
         return max(open_matches, key=lambda f: (f.valid_from, f.created_at))
@@ -77,10 +112,8 @@ class StructuredTier:
         """
         key = (normalize(subject), normalize(predicate))
         cands = [
-            f for f in self.facts
-            if (normalize(f.subject), normalize(f.predicate)) == key
-            and f.valid_from <= t < f.valid_to
-            and f.created_at <= t < f.expired_at
+            f for f in self._by_key.get(key, [])
+            if f.valid_from <= t < f.valid_to and f.created_at <= t < f.expired_at
         ]
         if not cands:
             return None
@@ -101,20 +134,93 @@ class StructuredTier:
             cur = last.object
         return last
 
+    def resolve_path_chain(self, subject: str, predicates: list[str],
+                           t: float | None = None) -> list[Fact] | None:
+        """Like :meth:`resolve_path` but returns EVERY fact traversed along the chain (so each
+        hop's provenance can be surfaced for attribution), or ``None`` if any hop is unresolved."""
+        cur, chain = subject, []
+        for pred in predicates:
+            f = self.resolve(cur, pred, t)
+            if f is None:
+                return None
+            chain.append(f)
+            cur = f.object
+        return chain
+
     def history(self, subject: str, predicate: str) -> list[Fact]:
         """All facts (open + superseded) for (subject, predicate), oldest first."""
         key = (normalize(subject), normalize(predicate))
-        out = [f for f in self.facts
-               if (normalize(f.subject), normalize(f.predicate)) == key]
-        return sorted(out, key=lambda f: (f.valid_from, f.created_at))
+        return sorted(self._by_key.get(key, []), key=lambda f: (f.valid_from, f.created_at))
 
     @property
     def open_facts(self) -> list[Fact]:
         return [f for f in self.facts if f.is_open]
+
+    def subjects_where(self, predicate: str, object: str, t: float | None = None) -> list[str]:
+        """Inverse / set query: every subject for which ``(subject, predicate, object)`` is
+        currently true (or true as believed at ``t``) — "who lives in Berlin?",
+        "who reports to Bob?". Sorted, distinct, O(matches) via the inverse index."""
+        cands = self._by_obj.get((normalize(predicate), normalize(object)), [])
+        if t is None:
+            hits = [f for f in cands if f.is_open]
+        else:
+            hits = [f for f in cands
+                    if f.valid_from <= t < f.valid_to and f.created_at <= t < f.expired_at]
+        return sorted({f.subject for f in hits})
+
+    def forget(self, subject: str, predicate: str | None = None, *,
+               as_object: bool = False) -> int:
+        """Hard-retract facts (the deletion path — e.g. a GDPR erasure request). Removes
+        every fact (open AND superseded history) whose subject matches — and, with
+        ``as_object``, every fact whose *object* names the subject (other entities' facts
+        that embed this entity's data). Returns the number of facts removed.
+
+        This is the ONE deliberate exception to the never-hard-delete invariant (PRD §8):
+        supersede preserves history; ``forget`` erases it, on explicit request only."""
+        ns = normalize(subject)
+        np_ = normalize(predicate) if predicate is not None else None
+
+        def doomed(f: Fact) -> bool:
+            if normalize(f.subject) == ns and (np_ is None or normalize(f.predicate) == np_):
+                return True
+            return as_object and np_ is None and normalize(f.object) == ns
+
+        removed = sum(1 for f in self.facts if doomed(f))
+        if removed:
+            self.facts = [f for f in self.facts if not doomed(f)]
+            self._by_key, self._by_obj = {}, {}
+            for f in self.facts:
+                self._index(f)
+        return removed
+
+    def predicates_for(self, subject: str) -> list[str]:
+        """Distinct predicates with a currently-open fact for ``subject`` (sorted, so the
+        order is deterministic regardless of insertion order)."""
+        skey = normalize(subject)
+        preds = {f.predicate for (subj, _pred), facts in self._by_key.items() if subj == skey
+                 for f in facts if f.is_open}
+        return sorted(preds)
 
     # ------------------------------------------------------------------ persistence --
     def to_dict(self) -> list[dict]:
         return [vars(f) for f in self.facts]
 
     def load(self, rows: list[dict]) -> None:
+        # rows come from an untrusted snapshot (restore path): validate each before splatting
+        # into Fact(**d), so a malformed/hostile blob fails with a clear ValueError instead of
+        # an opaque TypeError (mirrors the episodic-record hardening in backend._validate_snapshot).
+        if not isinstance(rows, list):
+            raise ValueError(f"structured facts must be a list, got {type(rows).__name__}")
+        for i, d in enumerate(rows):
+            if not isinstance(d, dict):
+                raise ValueError(f"fact[{i}] must be an object, got {type(d).__name__}")
+            extra = set(d) - _FACT_FIELDS
+            if extra:
+                raise ValueError(f"fact[{i}] has unknown fields {sorted(extra)}")
+            missing = _FACT_REQUIRED - set(d)
+            if missing:
+                raise ValueError(f"fact[{i}] missing required fields {sorted(missing)}")
         self.facts = [Fact(**d) for d in rows]
+        self._by_key, self._by_obj = {}, {}
+        for f in self.facts:
+            self._index(f)
