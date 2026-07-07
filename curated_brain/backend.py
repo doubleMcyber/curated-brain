@@ -185,6 +185,11 @@ class CuratedBrain(MemoryBackend):
         self._extractor_takes_speaker = (
             extractor is not None
             and "speaker" in inspect.signature(extractor.extract).parameters)
+        # Extractors MAY accept a `ref_ts` kwarg (event-date resolution against the write
+        # clock); same soft-detection so plain extract(text) extractors are unaffected.
+        self._extractor_takes_ref_ts = (
+            extractor is not None
+            and "ref_ts" in inspect.signature(extractor.extract).parameters)
         # Optional consolidation summarizer (an `LLM` protocol object): merged claims get a
         # real one-sentence summary instead of the most-reinforced member verbatim (PRD §8
         # "cluster & summarize"). Default None keeps consolidation model-free + deterministic.
@@ -231,10 +236,12 @@ class CuratedBrain(MemoryBackend):
                 # who is speaking (metadata "speaker"/"actor"), so ingestion without that
                 # signal is byte-identical to before.
                 speaker = meta.get("speaker") or meta.get("actor")
+                ex_kwargs: dict = {}
                 if speaker and self._extractor_takes_speaker:
-                    facts = self.extractor.extract(observation, speaker=speaker)
-                else:
-                    facts = self.extractor.extract(observation)
+                    ex_kwargs["speaker"] = speaker
+                if self._extractor_takes_ref_ts:
+                    ex_kwargs["ref_ts"] = timestamp
+                facts = self.extractor.extract(observation, **ex_kwargs)
                 if facts:
                     self._asserted_texts.add(normalize(observation))
         # Entity resolution (P1): canonicalize each fact's SUBJECT to a stable key — copy first

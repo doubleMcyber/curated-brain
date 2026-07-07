@@ -4,11 +4,15 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-06 (Temporal-reasoning lever BUILT, MEASURED, and REVERTED as null-lift —
-firewall-clean date-on-retrieval feature measured net-neutral on LongMemEval-temporal (0.100→0.100,
-n=50, 1 gained/1 lost); root-caused to uniform session-stamped fact dates + in-text cues, so the
-REAL fix is distinct-dated extraction, filed as the next lever. No CB code shipped; the honest
-negative is the deliverable. Prior line below.)
+Last updated: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
+the benchmark half. NEW `curated_brain/dates.py` deterministic offline event-date resolver +
+opt-in `HeuristicExtractor(resolve_dates=True)` → facts get their TRUE valid_from ("moved two
+months ago" → 2 months before the session, not the session date): a real bi-temporal correctness
+capability, +19 tests, Gate A hash 673a25c7 byte-identical (opt-in), reviewer-checked. The
+benchmark bet — dated-turn ingest + temporal retrieval to close the temporal-reasoning gap — was
+measured null AGAIN (n=50 0.100→0.080, 0 gained/1 lost; temporal retrieval even EMPTIED context on
+one question) and reverted. Second consecutive null on the temporal-retrieval approach: at 7B the
+answerer/judge doesn't convert dated context into correct orderings. Prior line below.)
 Prior: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
 oracle Letta 0.471 > CB 0.261 ~ Mem0 0.203 > Zep 0.065; `_s` CB 0.167 = Mem0 0.167, Letta
 0.083(partial n=12, ties CB 1/12 on the shared questions), Zep DNF, CB 8–24× cheaper. CB ≥ Mem0
@@ -536,16 +540,19 @@ Prioritized by (credibility)/(effort):
 2. **GPT-4o judge** in `bench_longmemeval.py` (route only the JUDGE call to GPT-4o, systems stay
    on the shared local model) — re-score existing frozen outputs, no re-run; cheapest
    leaderboard-credibility win.
-3. **Temporal-reasoning path** — the *date-on-retrieval* form (surface DATED lines, let the answer
-   model do the arithmetic) was **BUILT + MEASURED + REVERTED 2026-07-06: null lift** (n=50
-   0.100→0.100; see changelog). It failed because CB's dates are UNIFORM per session (extraction
-   stamps every fact with the session `valid_from`), so there is nothing to order. **The live
-   sub-lever is now `[13]` DISTINCT-DATED EXTRACTION:** parse the event date out of the turn text
-   ("two months ago", "last February", explicit dates) and stamp the fact/episode with its TRUE
-   event date, not the session date. Only then does dated retrieval have real ordering signal.
-   Bigger change (extractor + a date-resolution helper against the turn's wall-clock); Gate A must
-   stay QueryPlan-diff=0 / hash-identical on the diagnostic suite. Then re-measure the same
-   before/after on the temporal subset. CB 0.043 vs Letta 0.435 (still the fixable-category target).
+3. **Temporal-reasoning path — CLOSED as a retrieval-tuning target (two measured nulls).** Both
+   forms were built firewall-clean and measured before/after on the temporal subset, both null:
+   (i) date-on-retrieval with uniform session dates — 2026-07-06, n=50 0.100→0.100;
+   (ii) DISTINCT-dated ingest (`curated_brain/dates.py` resolving "two months ago" etc. to true
+   event dates) + temporal retrieval — 2026-07-07, n=50 0.100→0.080 (and it EMPTIED context on the
+   flagship question). The data supported the hypothesis (26/50 temporal questions carry a
+   resolvable in-text date), so the failure is downstream: **at the local 7B the answerer/judge
+   does not convert dated context into correct orderings**, and open-ended temporal retrieval is
+   fragile. Conclusion: distinct dates are not the bottleneck; **a credible temporal lift needs a
+   stronger answerer/judge (the hosted-endpoint dependency, item 4), not more retrieval tuning.**
+   The reusable win kept: `dates.py` + opt-in `HeuristicExtractor(resolve_dates=True)` (correct
+   bi-temporal valid_from for dated events) SHIPPED as a library capability. CB 0.043 vs Letta
+   0.435 stands, but is now understood as answerer/judge-bound, not retrieval-bound.
 4. **Hosted endpoint + n≈140 `_s` run to completion** (adapters already wired: CB
    OpenAICompatEmbedder, MEM0/ZEP_OPENAI_BASE, Letta handles): removes the throughput cap that
    caused Zep-DNF + Letta-partial; report CIs + McNemar. **Provisioning task, not engineering —
@@ -568,6 +575,41 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-07 — **Distinct-dated extraction: SHIPPED the library correctness half, measured +
+  REVERTED the benchmark half (2nd temporal null).** Followed the pre-registered split "ship the
+  surely-good part, measure the uncertain part."
+  **SHIPPED (deliverable A):** NEW `curated_brain/dates.py` — a deterministic, offline, dependency-
+  free event-date resolver (`resolve_event_date(text, ref_ts)` for relative "two months ago /
+  last February / yesterday" + absolute ISO / `M/D/Y` / "March 3rd 2023" forms; `strip_dates`
+  cleaner; calendar-aware month math, non-finite/out-of-range safe). Wired into
+  `HeuristicExtractor(resolve_dates=True)` (OPT-IN, default off): an event date stated in a clause
+  now sets the fact's `valid_from` to the TRUE event time, decoupled from `created_at` (the write
+  time) — so CB's bi-temporal valid-time is correct for retrospectively-stated events (verified
+  end-to-end: "two months ago, Erin moved to Vienna" → valid_from two months back, created_at =
+  now). Backend threads `ref_ts` via the same soft-introspection as `speaker` (plain
+  `extract(text)` extractors unaffected). +19 tests (`test_dates.py`, `test_dated_extraction.py`);
+  Gate A determinism hash `673a25c7` BYTE-IDENTICAL (opt-in → diagnostic constructs the default-off
+  extractor); Gate B 211 passed / ruff / mypy clean; separate Opus-4.8 reviewer pass. A genuine
+  correctness capability that stands on its own (useful for as-of queries), independent of any
+  benchmark.
+  **MEASURED + REVERTED (deliverable B):** the benchmark-facing bet — resolve each raw turn's event
+  date at ingest and prefix the turn with it (so same-session events get distinct dates), plus a
+  temporal-intent retrieval that skips the attribute backstop and recalls unscoped so the dated
+  event turns surface. Data probe was encouraging (26/50 temporal questions carry a resolvable
+  in-text date). But measured on the temporal-reasoning subset (local qwen2.5:7b, seed 42, n=50,
+  vs the same HEAD baseline 0.100): **0.100 → 0.080 (0 gained / 1 lost)** — null-to-negative AGAIN,
+  and worse, the temporal reprioritization **emptied the context** on the flagship question
+  (`gpt4_2487a7cb`: skipping the backstop + an empty unscoped vector recall → "I don't know"). Per
+  the pre-registered "keep only if a real lift" rule, **reverted** (CB `retrieval.py` back at HEAD,
+  the two `backend.py` temporal edits undone, harness ingest reverted; Gate A hash restored). The
+  general harness `--type` filter (committed earlier) stays.
+  **Verdict — second consecutive temporal-retrieval null, now with a firm conclusion:** distinct
+  dates are NOT the bottleneck. At the local 7B, the answerer/judge does not turn dated context
+  into correct orderings, and CB's open-ended temporal retrieval is fragile (empties context when
+  the backstop is skipped). The honest close: the date-on-retrieval family of fixes does not move
+  LongMemEval-temporal at this model scale — a credible temporal lift needs a stronger
+  answerer/judge (the hosted-endpoint dependency), not more retrieval tuning. `dates.py` remains a
+  clean, reusable win.
 - 2026-07-06 — **Temporal-reasoning lever: BUILT, measured before/after, REVERTED as null-lift —
   the honest negative is the deliverable (user-chosen capability track).** The roadmap's #3 lever
   (temporal-reasoning, CB 0.043 vs Letta 0.435, the one arithmetically-fixable oracle category).

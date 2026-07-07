@@ -6,6 +6,12 @@ the project is pre-1.0, so the API may still change.
 ## [Unreleased]
 
 ### Added
+- **Event-date resolution** (`curated_brain.dates`): a deterministic, offline, dependency-free
+  resolver (`resolve_event_date(text, ref_ts)`) for relative ("two months ago", "last February",
+  "yesterday") and absolute (ISO, `M/D/Y`, "March 3rd 2023") date expressions. Opt-in on the
+  heuristic extractor (`HeuristicExtractor(resolve_dates=True)`): a date stated in a clause sets
+  the fact's `valid_from` to the true event time, decoupled from the write time — so bi-temporal
+  valid-time is correct for retrospectively-stated events (e.g. as-of queries).
 - Real local-model providers — `SentenceTransformerEmbedder` (bge/e5) and `TransformersLLM`
   (local chat model) — behind the frozen-model protocols; the deterministic fakes remain the
   default test doubles so the offline gate needs no model stack. **bge-small verified offline**.
