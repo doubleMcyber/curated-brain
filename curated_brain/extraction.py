@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 
+from curated_brain.dates import resolve_event_date, strip_dates
 from curated_brain.util import normalize, tokenize
 
 # Schema-constrained, few-shot prompt (the roadmap's mitigation for weak small-model
@@ -198,8 +199,13 @@ class HeuristicExtractor:
     cleared by :meth:`reset` (the consuming ``CuratedBrain.reset`` calls it).
     """
 
-    def __init__(self, *, max_facts: int = 8) -> None:
+    def __init__(self, *, max_facts: int = 8, resolve_dates: bool = False) -> None:
         self.max_facts = max_facts
+        # OFF by default so existing behavior (and the byte-identical diagnostic gate) is
+        # unchanged. When on, an event date stated in a clause ("...two months ago",
+        # "on 2023-03-15") sets the fact's valid_from to the TRUE event time instead of the
+        # write time, so bi-temporal valid-time is correct for retrospectively-stated events.
+        self.resolve_dates = resolve_dates
         self._last_subject: str | None = None
 
     def reset(self) -> None:
@@ -220,13 +226,17 @@ class HeuristicExtractor:
             return clause
         return f"{clause[:m.start(1)]}{self._last_subject}'s {clause[m.end(1):].lstrip()}"
 
-    def extract(self, text: str, *, speaker: str | None = None) -> list[dict]:
+    def extract(self, text: str, *, speaker: str | None = None,
+                ref_ts: float | None = None) -> list[dict]:
+        """``ref_ts`` (the observation's wall clock) is used only when ``resolve_dates`` is
+        set: a date stated in a clause resolves against it to the fact's ``valid_from``."""
         if speaker:
             text = resolve_first_person(text, speaker)
         facts: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
         for clause in _CLAUSE_SPLIT_RE.split(text):
-            fact = self._parse_clause(self._resolve_pronoun(clause))
+            resolved = self._resolve_pronoun(clause)
+            fact = self._parse_clause(resolved)
             if fact is None:
                 continue
             self._last_subject = fact["subject"]  # track most-recent named subject
@@ -235,6 +245,17 @@ class HeuristicExtractor:
             if key in seen:
                 continue
             seen.add(key)
+            if self.resolve_dates and ref_ts is not None:
+                # date is read from the SAME clause the fact came from, so it attaches to the
+                # right fact; no date found -> valid_from omitted -> falls back to write time.
+                vf = resolve_event_date(resolved, ref_ts)
+                if vf is not None:
+                    fact["valid_from"] = vf
+                    # a trailing date phrase the greedy object swallowed ("Vienna two months
+                    # ago") is lifted into valid_from, so strip it back out of the value.
+                    cleaned = strip_dates(fact["object"])
+                    if cleaned:
+                        fact["object"] = cleaned
             facts.append(fact)
             if len(facts) >= self.max_facts:
                 break
