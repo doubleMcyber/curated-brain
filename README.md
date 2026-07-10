@@ -173,6 +173,18 @@ pip install -e ".[mcp]"
 curated-brain-mcp            # stdio server; set CB_MCP_PATH=store.json to persist across runs
 ```
 
+## Concurrency
+
+A `CuratedBrain` (and a `NamespacedMemory`) is thread-safe within one process. Each holds a
+single coarse-grained reentrant lock, acquired at every public method, so concurrent calls
+from multiple threads serialize rather than corrupting state. The lock is coarse: calls do
+not run in parallel against one store. `NamespacedMemory` guards only its namespace registry,
+so operations on different namespaces still run concurrently against their own stores.
+
+Across processes the contract is single-writer. `save`/`load` do no file locking, so two
+processes writing the same store file can overwrite each other's snapshot. Give each writer
+its own file, or serialize writers yourself.
+
 ## Use it from LangChain
 
 ```python

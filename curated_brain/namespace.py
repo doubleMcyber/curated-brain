@@ -16,6 +16,7 @@ byte format. ``load``/``restore`` accept a legacy single-store blob (it becomes 
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 
 from curated_brain.backend import CuratedBrain
@@ -34,23 +35,30 @@ class NamespacedMemory:
     def __init__(self, factory: Callable[[], CuratedBrain] | None = None) -> None:
         self._factory = factory or (lambda: CuratedBrain(seed=0))
         self._spaces: dict[str, CuratedBrain] = {}
+        # Guards the namespace registry (`_spaces`) only. Reentrant because registry ops call
+        # one another (snapshot() iterates while space() may create). Each CuratedBrain owns
+        # its own lock, so per-store work is not serialized behind this one.
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ spaces -------
     def space(self, namespace: str = DEFAULT_NAMESPACE) -> CuratedBrain:
         """The namespace's store, created on first use."""
         if not isinstance(namespace, str) or not namespace:
             raise ValueError(f"namespace must be a non-empty str, got {namespace!r}")
-        if namespace not in self._spaces:
-            self._spaces[namespace] = self._factory()
-        return self._spaces[namespace]
+        with self._lock:
+            if namespace not in self._spaces:
+                self._spaces[namespace] = self._factory()
+            return self._spaces[namespace]
 
     def namespaces(self) -> list[str]:
-        return sorted(self._spaces)
+        with self._lock:
+            return sorted(self._spaces)
 
     def drop(self, namespace: str) -> bool:
         """Erase an entire namespace (tenant off-boarding / full GDPR erasure).
         Returns whether it existed."""
-        return self._spaces.pop(namespace, None) is not None
+        with self._lock:
+            return self._spaces.pop(namespace, None) is not None
 
     # ------------------------------------------------------- scoped store operations --
     def write(self, namespace: str, observation: str, *, session_id: str,
@@ -72,22 +80,24 @@ class NamespacedMemory:
     # ------------------------------------------------------------------ persistence --
     def snapshot(self) -> bytes:
         """Deterministic multi-store blob: ``{"namespaces": {ns: <sub-blob utf-8>}}``."""
-        payload = {"namespaces": {ns: self._spaces[ns].snapshot().decode("utf-8")
-                                  for ns in sorted(self._spaces)}}
-        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        with self._lock:
+            payload = {"namespaces": {ns: self._spaces[ns].snapshot().decode("utf-8")
+                                      for ns in sorted(self._spaces)}}
+            return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def restore(self, blob: bytes) -> None:
         state = json.loads(blob.decode("utf-8"))
-        self._spaces = {}
-        if "namespaces" in state:
-            for ns, sub in state["namespaces"].items():
+        with self._lock:
+            self._spaces = {}
+            if "namespaces" in state:
+                for ns, sub in state["namespaces"].items():
+                    cb = self._factory()
+                    cb.restore(sub.encode("utf-8"))
+                    self._spaces[ns] = cb
+            else:  # legacy single-store blob -> it becomes the default namespace
                 cb = self._factory()
-                cb.restore(sub.encode("utf-8"))
-                self._spaces[ns] = cb
-        else:  # legacy single-store blob -> it becomes the default namespace
-            cb = self._factory()
-            cb.restore(blob)
-            self._spaces[DEFAULT_NAMESPACE] = cb
+                cb.restore(blob)
+                self._spaces[DEFAULT_NAMESPACE] = cb
 
     def save(self, path: str) -> None:
         with open(path, "wb") as fh:

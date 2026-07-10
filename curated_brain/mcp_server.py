@@ -32,8 +32,9 @@ class MemoryService:
     (write at t=0.0) stamped every fact at the epoch, silently disabling recency scoring,
     supersede ordering, and all as-of semantics for the flagship integration.
 
-    Thread safety: a single lock serializes all operations — CuratedBrain has no internal
-    locking, and MCP hosts may issue concurrent tool calls."""
+    Thread safety: a single lock serializes all operations — kept even though CuratedBrain
+    now carries its own RLock, because this service's read-modify-persist sequences must stay
+    atomic as a unit, and MCP hosts may issue concurrent tool calls."""
 
     def __init__(self, cb: CuratedBrain | None = None, *, path: str | None = None,
                  persist_every: int = 1) -> None:

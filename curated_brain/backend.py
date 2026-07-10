@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import math
+import threading
 from dataclasses import MISSING
 
 from curated_brain.config import CBConfig
@@ -164,6 +165,11 @@ class CuratedBrain(MemoryBackend):
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None, max_context_items: int | None = None,
                  summarizer=None, pricing=None, config: CBConfig | None = None) -> None:
+        # Coarse-grained reentrant lock: every public entry point acquires it, so all state
+        # reads/mutations serialize within one process. RLock (not Lock) because public methods
+        # call one another (e.g. stats() -> snapshot()); private helpers stay lock-free. It is
+        # runtime-only state, never serialized (see _state()), so determinism is unaffected.
+        self._lock = threading.RLock()
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
@@ -214,6 +220,12 @@ class CuratedBrain(MemoryBackend):
     # ------------------------------------------------------------------ write path ---
     def write(self, observation: str, *, session_id: str, timestamp: float,
               metadata: dict | None = None) -> WriteReceipt:
+        with self._lock:
+            return self._write(observation, session_id=session_id, timestamp=timestamp,
+                               metadata=metadata)
+
+    def _write(self, observation: str, *, session_id: str, timestamp: float,
+               metadata: dict | None = None) -> WriteReceipt:
         if not isinstance(observation, str):
             raise TypeError(f"observation must be str, got {type(observation).__name__}")
         if not math.isfinite(timestamp):
@@ -348,19 +360,22 @@ class CuratedBrain(MemoryBackend):
     # ----------------------------------------------------------- structured answers --
     def answer_structured(self, subject: str, predicate: str, *, at: float | None = None) -> str:
         """Exact / as-of-time answer from the structured tier (empty string if unknown)."""
-        f = self.structured.resolve(self._resolver.canonical(subject), predicate, at)
-        return f.object if f else ""
+        with self._lock:
+            f = self.structured.resolve(self._resolver.canonical(subject), predicate, at)
+            return f.object if f else ""
 
     def answer_path(self, subject: str, predicates: list[str], *,
                     at: float | None = None) -> str:
         """Multi-hop relational answer from the structured tier."""
-        f = self.structured.resolve_path(self._resolver.canonical(subject), predicates, at)
-        return f.object if f else ""
+        with self._lock:
+            f = self.structured.resolve_path(self._resolver.canonical(subject), predicates, at)
+            return f.object if f else ""
 
     def answer_who(self, predicate: str, object: str, *, at: float | None = None) -> list[str]:
         """Inverse / set query: every subject for which (predicate, object) currently holds
         (or held as believed at ``at``) — "who lives in Berlin?", "who reports to Bob?"."""
-        return self.structured.subjects_where(predicate, object, at)
+        with self._lock:
+            return self.structured.subjects_where(predicate, object, at)
 
     # ------------------------------------------------------------------ erasure ------
     def forget(self, subject: str, *, predicate: str | None = None) -> dict:
@@ -376,6 +391,10 @@ class CuratedBrain(MemoryBackend):
         Documented limit: a free-text record that merely MENTIONS the entity with no
         extracted fact link is not traceable to it and remains — full text-level erasure
         needs a scan the caller can do via the returned report + their own audit."""
+        with self._lock:
+            return self._forget(subject, predicate=predicate)
+
+    def _forget(self, subject: str, *, predicate: str | None = None) -> dict:
         self._derived = None
         ns = self._resolver.canonical(subject)
         np_ = normalize(predicate) if predicate is not None else None
@@ -420,6 +439,12 @@ class CuratedBrain(MemoryBackend):
         time-scoped memory ("what did I note last spring?"), threaded to the vector tier's
         window filter. Default None → unscoped (byte-identical to before; AC-1/AC-9 intact).
         """
+        with self._lock:
+            return self._query(question, session_id=session_id, timestamp=timestamp,
+                               k=k, window=window)
+
+    def _query(self, question: str, *, session_id: str, timestamp: float,
+               k: int = 8, window: tuple[float, float] | None = None) -> Retrieval:
         if not isinstance(question, str):
             raise TypeError(f"question must be str, got {type(question).__name__}")
         if not math.isfinite(timestamp):
@@ -566,13 +591,14 @@ class CuratedBrain(MemoryBackend):
         vectors are recomputed and each record's ``embed_model_id`` is stamped with the new
         model. Lets the layer survive an embedder upgrade without losing recall.
         """
-        self._derived = None
-        old = self.embedder.model_id
-        self.embedder = new_embedder
-        n = self.vector.reembed(new_embedder)
-        for r in self._episodes:
-            r.embed_model_id = new_embedder.model_id
-        return {"reembedded": n, "from": old, "to": new_embedder.model_id}
+        with self._lock:
+            self._derived = None
+            old = self.embedder.model_id
+            self.embedder = new_embedder
+            n = self.vector.reembed(new_embedder)
+            for r in self._episodes:
+                r.embed_model_id = new_embedder.model_id
+            return {"reembedded": n, "from": old, "to": new_embedder.model_id}
 
     def consolidate(self) -> ConsolidationReport:
         """Compress the episodic tier (PRD §8). Fact-bearing episodes are grouped by their
@@ -581,6 +607,10 @@ class CuratedBrain(MemoryBackend):
         history lives non-lossily in the structured tier. Remaining free-text episodes have
         only true near-duplicates merged. Structured facts and provenance are never touched,
         so accuracy is preserved and the audit trail is intact."""
+        with self._lock:
+            return self._consolidate()
+
+    def _consolidate(self) -> ConsolidationReport:
         self._derived = None
         episodes_in = len(self._episodes)
         current_obj = {(normalize(f.subject), normalize(f.predicate)): normalize(f.object)
@@ -668,19 +698,24 @@ class CuratedBrain(MemoryBackend):
         return claim
 
     def stats(self) -> StoreStats:
-        return StoreStats(
-            episodic_count=sum(1 for r in self._episodes if r.tier == "episodic"),
-            structured_count=len(self.structured.facts),
-            semantic_count=sum(1 for r in self._episodes if r.tier == "semantic"),
-            bytes=len(self.snapshot()),
-            embed_model_id=self.embedder.model_id,
-        )
+        with self._lock:
+            return StoreStats(
+                episodic_count=sum(1 for r in self._episodes if r.tier == "episodic"),
+                structured_count=len(self.structured.facts),
+                semantic_count=sum(1 for r in self._episodes if r.tier == "semantic"),
+                bytes=len(self.snapshot()),
+                embed_model_id=self.embedder.model_id,
+            )
 
     def metrics(self) -> dict:
         """Operational metrics for observability (PRD §G): the write-decision breakdown and
         store size. ``discard_rate`` is the selectivity signal — it should stay high on a
         redundant stream (Pillar B), evidence the gate is doing its job rather than logging
         everything. Cheap, side-effect-free, and safe to poll between writes."""
+        with self._lock:
+            return self._metrics()
+
+    def _metrics(self) -> dict:
         d = self._decisions
         total = d["stored"] + d["reinforced"] + d["discarded"]
         # Count records directly (don't call stats(), which serializes the whole store just
@@ -709,6 +744,10 @@ class CuratedBrain(MemoryBackend):
         }
 
     def reset(self) -> None:
+        with self._lock:
+            self._reset()
+
+    def _reset(self) -> None:
         self._derived = None
         self._counter = 0
         self._episodes = []
@@ -771,11 +810,16 @@ class CuratedBrain(MemoryBackend):
         }
 
     def snapshot(self) -> bytes:
-        payload = to_jsonable(self._state())
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                          allow_nan=False).encode("utf-8")
+        with self._lock:
+            payload = to_jsonable(self._state())
+            return json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                              allow_nan=False).encode("utf-8")
 
     def restore(self, blob: bytes) -> None:
+        with self._lock:
+            self._restore(blob)
+
+    def _restore(self, blob: bytes) -> None:
         # Snapshots carry data, not tuning: CBConfig is not persisted, so retrieval/vector
         # knobs come from THIS brain's config — but the gate's runtime state (thresholds
         # included) is restored from the snapshot, overriding the config's gate knobs.
@@ -833,10 +877,12 @@ class CuratedBrain(MemoryBackend):
     def save(self, path: str) -> None:
         """Durably persist the whole store to ``path`` (survives a process restart). Thin,
         deterministic wrapper over :meth:`snapshot` — the bytes are the canonical state."""
-        with open(path, "wb") as fh:
-            fh.write(self.snapshot())
+        with self._lock:
+            with open(path, "wb") as fh:
+                fh.write(self.snapshot())
 
     def load(self, path: str) -> None:
         """Reopen a store previously written by :meth:`save`, replacing current state."""
-        with open(path, "rb") as fh:
-            self.restore(fh.read())
+        with self._lock:
+            with open(path, "rb") as fh:
+                self.restore(fh.read())
