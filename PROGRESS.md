@@ -12,10 +12,19 @@ restore + ANN sidecar, MCP namespaces, logprob predictive surprise (PRD §6 #2 i
 n-hop planner chains, fuzzy entity fallback (opt-in), definite-NP/ellipsis coreference (opt-in,
 frozen-holdout-gated 28/28), preference path (opt-in after Gate A REJECTED the always-on form —
 firewall worked: hash 07760396 + precision 0.79→0.74 regression caught and reverted to opt-in,
-Gate A restored). REMAINING, all needing user go-ahead (compute-heavy, qwen2.5:7b via Ollama):
-WS9 summarizer cassette (~5-15 min), WS8 live logprob cassette (~20-60 min), WS13 frozen
-preference-subset re-run (~1.5-2 h). Session plan:
-`~/.claude/plans/go-through-the-entire-structured-sparrow.md`. Prior line below.)
+Gate A restored). The three user-approved compute runs then EXECUTED (2026-07-10): WS9 summarizer cassette
+RECORDED + reviewer-passed (`2240b4f` — 2 genuine qwen2.5:7b merges, fact-token coverage
+pinned); WS8b logprob cassette RECORDED + reviewer-passed (`e0b5b9b` — HONEST NEGATIVE pinned
+by equality assertion: mean-logprob estimator rescued 0/5 dead-zone updates on real 7B output,
+README now calls it experimental); WS13b preference benchmark run per pre-registration
+(harness `PREREG_preference_run.md`) — measured EXACTLY NULL (0.100 = 0.100, 0 gained/0 lost;
+lever barely engaged: 3/30 contexts carried a preference fact, 26/30 byte-identical) → adapter
+lever REVERTED per the frozen rule (harness `313b891`), library capability stays opt-in. Third
+consecutive category-lever null at the local 7B (temporal x2, preference x1): category gaps are
+answerer/extraction-bound at this scale. ALL 13 WORKSTREAMS CLOSED. Session plan:
+`~/.claude/plans/go-through-the-entire-structured-sparrow.md`; deferred Tier 4/5 items
+(diagnostic-suite CIs, extraction-ON full B-eval, `_s` n=140 completion, release cut 0.2.0,
+positioning) documented there. Prior line below.)
 Prior: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
 the benchmark half. NEW `curated_brain/dates.py` deterministic offline event-date resolver +
 opt-in `HeuristicExtractor(resolve_dates=True)` → facts get their TRUE valid_from ("moved two
