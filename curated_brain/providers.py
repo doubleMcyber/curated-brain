@@ -20,9 +20,15 @@ Design constraints:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
+
+# Package logger discipline (see __init__ / backend.py): silent by default via the
+# package-level NullHandler; we only ever log the url, an HTTP status or exception class,
+# and elapsed seconds — never the api key, headers, prompt/text, or response body.
+logger = logging.getLogger("curated_brain.providers")
 
 # Best-known output dimensions, so ``.dim`` is available without loading the model (which
 # would otherwise be triggered by a plain ``hasattr``/``isinstance`` Protocol check). The
@@ -143,37 +149,92 @@ def _unit(v: np.ndarray) -> np.ndarray:
 
 def _http_post_json(url: str, body: dict, api_key: str | None, timeout: float) -> dict:
     import json
+    import time
+    import urllib.error
     import urllib.request
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
                                  headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted base_url)
-        return json.loads(resp.read().decode("utf-8"))
+    t0 = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted base_url)
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:  # non-2xx: log the status, not the body
+        logger.warning("http post failed url=%s status=%d elapsed=%.3fs",
+                       url, e.code, time.monotonic() - t0)
+        raise
+    except Exception as e:  # URLError, socket timeout, decode errors: log the class, not args
+        logger.warning("http post failed url=%s error=%s elapsed=%.3fs",
+                       url, type(e).__name__, time.monotonic() - t0)
+        raise
+
+
+def _openai_request(provider: Any, path: str, body: dict) -> dict:
+    """Shared request path for both OpenAI-compat providers: pick the injected transport or
+    stdlib HTTP, wrapped in the bounded-retry loop. Same call semantics as before when
+    ``retries==0`` and (for the live path) byte-identical to the pre-hardening wire format."""
+    url = provider.base_url + path
+    if provider._post is not None:
+        def post_once() -> dict:
+            return provider._post(path, body)
+    else:
+        def post_once() -> dict:
+            return _http_post_json(url, body, provider._api_key, provider._timeout)
+        post_once._live = True  # type: ignore[attr-defined]  # _http_post_json logs its own failures
+    return _post_with_retries(post_once, url, provider._retries)
+
+
+def _post_with_retries(post_once, url: str, retries: int) -> dict:
+    """Run ``post_once`` (a no-arg ``() -> dict``), retrying up to ``retries`` times on any
+    exception and re-raising the last one. ``retries==0`` => one attempt, no sleep, exactly
+    today's behavior. A fixed 0.5s sleep runs only *between* live attempts, so with an
+    injected transport (retries left) it stays fast enough for tests. Injected-transport
+    failures are logged here (with ``url``, exception class, no secrets/body); the live path
+    logs inside :func:`_http_post_json`, so we suppress the duplicate for it via ``_live``."""
+    import time
+    attempts = retries + 1
+    for i in range(attempts):
+        try:
+            return post_once()
+        except Exception as e:
+            if not getattr(post_once, "_live", False):  # live path already logged its own
+                logger.warning("http post failed url=%s error=%s attempt=%d/%d",
+                               url, type(e).__name__, i + 1, attempts)
+            if i == attempts - 1:
+                raise
+            time.sleep(0.5)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 class OpenAICompatEmbedder:
     """Embedder backed by any OpenAI-compatible ``/embeddings`` endpoint (OpenAI, vLLM,
     Ollama's OpenAI mode, Together, …). ``dim`` is required so the vector tier can be sized
     without a network call. Pass ``post`` (a ``(path, body) -> dict`` callable) to inject a
-    transport in tests; production uses stdlib HTTP."""
+    transport in tests; production uses stdlib HTTP.
+
+    ``timeout`` is in seconds and applies per HTTP request. ``batch_size`` caps how many
+    inputs go in one ``/embeddings`` request; longer batches are split into consecutive
+    chunks (results concatenated in input order). ``retries`` re-issues a failed request up
+    to that many extra times (total attempts = ``retries+1``); default 0 = one attempt."""
 
     def __init__(self, model: str, *, dim: int,
                  base_url: str = "https://api.openai.com/v1",
-                 api_key: str | None = None, timeout: float = 30.0, post=None) -> None:
+                 api_key: str | None = None, timeout: float = 30.0,
+                 batch_size: int = 128, retries: int = 0, post=None) -> None:
         self.model = model
         self.model_id = f"openai:{model}"
         self.dim = dim
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
+        self._batch_size = batch_size
+        self._retries = retries
         self._post = post
 
     def _request(self, path: str, body: dict) -> dict:
-        if self._post is not None:
-            return self._post(path, body)
-        return _http_post_json(self.base_url + path, body, self._api_key, self._timeout)
+        return _openai_request(self, path, body)
 
     def embed(self, text: str) -> np.ndarray:
         data = self._request("/embeddings", {"model": self.model, "input": text})
@@ -182,18 +243,27 @@ class OpenAICompatEmbedder:
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float64)
-        data = self._request("/embeddings", {"model": self.model, "input": list(texts)})
-        rows = sorted(data["data"], key=lambda d: d["index"])  # preserve input order
-        return np.vstack([_unit(np.asarray(r["embedding"], dtype=np.float64)) for r in rows])
+        out: list[np.ndarray] = []
+        for start in range(0, len(texts), self._batch_size):  # consecutive chunks, in order
+            chunk = list(texts[start:start + self._batch_size])
+            data = self._request("/embeddings", {"model": self.model, "input": chunk})
+            rows = sorted(data["data"], key=lambda d: d["index"])  # preserve input order
+            out.extend(_unit(np.asarray(r["embedding"], dtype=np.float64)) for r in rows)
+        return np.vstack(out)
 
 
 class OpenAICompatLLM:
     """Chat LLM backed by any OpenAI-compatible ``/chat/completions`` endpoint. Temperature
-    defaults to 0 (greedy) for reproducibility. Pass ``post`` to inject a transport in tests."""
+    defaults to 0 (greedy) for reproducibility. Pass ``post`` to inject a transport in tests.
+
+    ``timeout`` is in seconds and applies per HTTP request. ``retries`` re-issues a failed
+    request up to that many extra times (total attempts = ``retries+1``); default 0 = one
+    attempt (exactly today's behavior)."""
 
     def __init__(self, model: str, *, base_url: str = "https://api.openai.com/v1",
                  api_key: str | None = None, max_tokens: int = 256,
-                 temperature: float = 0.0, timeout: float = 60.0, post=None) -> None:
+                 temperature: float = 0.0, timeout: float = 60.0,
+                 retries: int = 0, post=None) -> None:
         self.model = model
         self.model_id = f"openai:{model}"
         self.base_url = base_url.rstrip("/")
@@ -201,12 +271,11 @@ class OpenAICompatLLM:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self._timeout = timeout
+        self._retries = retries
         self._post = post
 
     def _request(self, path: str, body: dict) -> dict:
-        if self._post is not None:
-            return self._post(path, body)
-        return _http_post_json(self.base_url + path, body, self._api_key, self._timeout)
+        return _openai_request(self, path, body)
 
     def complete(self, prompt: str) -> str:
         body = {"model": self.model,
