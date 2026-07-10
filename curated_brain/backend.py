@@ -215,6 +215,13 @@ class CuratedBrain(MemoryBackend):
         self._extractor_takes_ref_ts = (
             extractor is not None
             and "ref_ts" in inspect.signature(extractor.extract).parameters)
+        # Extractors MAY accept a `resolve_role` kwarg (definite-NP coreference): the backend
+        # supplies a "role noun -> sole current holder or None" lookup over the structured
+        # tier, so "the manager" resolves to the unique person with an open (·, role, manager)
+        # fact. Same soft-detection so plain extract(text) extractors are unaffected.
+        self._extractor_takes_resolve_role = (
+            extractor is not None
+            and "resolve_role" in inspect.signature(extractor.extract).parameters)
         # Optional consolidation summarizer (an `LLM` protocol object): merged claims get a
         # real one-sentence summary instead of the most-reinforced member verbatim (PRD §8
         # "cluster & summarize"). Default None keeps consolidation model-free + deterministic.
@@ -299,6 +306,8 @@ class CuratedBrain(MemoryBackend):
                     ex_kwargs["speaker"] = speaker
                 if self._extractor_takes_ref_ts:
                     ex_kwargs["ref_ts"] = timestamp
+                if self._extractor_takes_resolve_role:
+                    ex_kwargs["resolve_role"] = self._resolve_role
                 facts = self.extractor.extract(observation, **ex_kwargs)
                 if facts:
                     self._asserted_texts.add(normalize(observation))
@@ -358,6 +367,14 @@ class CuratedBrain(MemoryBackend):
         self._note_session(session_id, timestamp)
         return WriteReceipt(stored=decision == STORE, reason=decision,
                             record_id=rec_id, surprise=surprise)
+
+    def _resolve_role(self, noun: str) -> str | None:
+        """Definite-NP coreference lookup for a fact-extractor: the SOLE entity that currently
+        holds the role ``noun`` (an open ``(subject, role, noun)`` fact), or ``None`` when
+        there are zero or more than one — fail-closed on ambiguity. Called inside ``_write``
+        (already under the lock), so it reads the structured tier directly."""
+        holders = self.structured.subjects_where("role", noun)
+        return holders[0] if len(holders) == 1 else None
 
     def _is_contradiction(self, fact: dict | None) -> bool:
         if not fact:

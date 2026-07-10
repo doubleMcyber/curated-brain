@@ -14,6 +14,7 @@ extractor runs on a real local model, on a hosted model, or — for deterministi
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from curated_brain.dates import resolve_event_date, strip_dates
 from curated_brain.util import normalize, tokenize
@@ -157,6 +158,20 @@ def resolve_first_person(text: str, speaker: str) -> str:
 # resolved to the most-recent named subject — recency-based coreference.
 _PRONOUN_SUBJ_RE = re.compile(r"^\s*(?:[A-Za-z][^,]*,\s+)?(their|his|her|its)\s+", re.I)
 
+# A leading definite noun phrase in subject position: "The manager ...", "The manager's ...".
+# The single captured word is the head noun; it is resolved (via a role lookup the backend
+# supplies) to the unique entity holding that role, then substituted back so the existing
+# named-subject patterns parse the clause. Only ONE noun word is allowed (so "The manager
+# position is open" is not treated as the subject "manager position").
+_DEFINITE_SUBJ_RE = re.compile(r"^\s*[Tt]he\s+([a-z]+)('s\b|\s)")
+
+# Verb heads that can open a subjectless (ellipsis) clause — the intransitive/copular forms
+# whose named-subject counterparts already exist in _VERB_PATTERNS. A subjectless clause
+# starting with one of these reuses the most-recent named subject.
+_ELLIPSIS_VERB_RE = re.compile(
+    r"^\s*(?:moved|relocated|lives|resides|reports|works|was\s+promoted|has\s+"
+    r"(?:moved|relocated))\b", re.I)
+
 
 def _canon_predicate(attr: str) -> str:
     """Canonical predicate key: content tokens minus temporal markers, space-joined, then
@@ -197,15 +212,32 @@ class HeuristicExtractor:
     is resolved to the most-recent named subject seen across calls (recency-based
     coreference), so contradiction updates phrased with a pronoun still supersede. State is
     cleared by :meth:`reset` (the consuming ``CuratedBrain.reset`` calls it).
+
+    **Definite-NP / ellipsis coreference (opt-in):** with ``resolve_definite_np=True`` two
+    further references are resolved. A definite noun phrase in subject position ("The manager
+    moved to Vienna") is resolved via a ``resolve_role`` callback the backend supplies to the
+    unique entity holding that role (in this vocab, an open ``(person, role, <noun>)`` fact) —
+    fail-closed: zero OR more than one candidate means no resolution. An ellipsis subject (a
+    subjectless clause, "Moved to Vienna.") reuses the most-recent named subject only when the
+    clause matches an existing verb form. Default OFF keeps behavior byte-identical.
+
+    Known limitation (multi-speaker streams): the ellipsis antecedent is the last NAMED
+    subject across all writes regardless of who is speaking — in an interleaved multi-speaker
+    stream a subjectless clause can bind to a prior speaker's subject. Same recency semantics
+    as the pronoun path; keep the feature off (or one extractor per speaker) in that setting.
     """
 
-    def __init__(self, *, max_facts: int = 8, resolve_dates: bool = False) -> None:
+    def __init__(self, *, max_facts: int = 8, resolve_dates: bool = False,
+                 resolve_definite_np: bool = False) -> None:
         self.max_facts = max_facts
         # OFF by default so existing behavior (and the byte-identical diagnostic gate) is
         # unchanged. When on, an event date stated in a clause ("...two months ago",
         # "on 2023-03-15") sets the fact's valid_from to the TRUE event time instead of the
         # write time, so bi-temporal valid-time is correct for retrospectively-stated events.
         self.resolve_dates = resolve_dates
+        # OFF by default (byte-identical behavior; the Gate A hash is untouched). When on,
+        # definite-NP subjects and ellipsis subjects are resolved (see class docstring).
+        self.resolve_definite_np = resolve_definite_np
         self._last_subject: str | None = None
 
     def reset(self) -> None:
@@ -226,16 +258,52 @@ class HeuristicExtractor:
             return clause
         return f"{clause[:m.start(1)]}{self._last_subject}'s {clause[m.end(1):].lstrip()}"
 
+    def _resolve_definite_np(self, clause: str,
+                             resolve_role: Callable[[str], str | None]) -> str:
+        """Replace a leading definite-NP subject ("The manager X") with the unique entity
+        holding that role, so the clause parses to a named fact. ``resolve_role`` returns the
+        sole role-holder or ``None`` (zero or ambiguous — fail-closed); an unresolved noun is
+        left as-is, so "The manager position is open" and generic "The city ..." don't fire."""
+        m = _DEFINITE_SUBJ_RE.match(clause)
+        if not m:
+            return clause
+        name = resolve_role(m.group(1))
+        if name is None:
+            return clause
+        # Rebuild with the resolved name in place of "The <noun>", keeping any "'s" so a
+        # possessive clause ("The manager's project is X") stays a possessive.
+        return f"{name}{m.group(2)}{clause[m.end(2):]}"
+
+    def _resolve_ellipsis(self, clause: str) -> str:
+        """Prepend the most-recent named subject to a subjectless verb clause ("Moved to
+        Vienna." -> "Erin moved to Vienna."), so the named-subject patterns parse it. Only
+        fires on the intransitive/copular verb heads that already have a named form."""
+        if self._last_subject is None or not _ELLIPSIS_VERB_RE.match(clause):
+            return clause
+        verb = clause.lstrip()
+        # lowercase the (sentence-initial, capitalized) verb so the case-sensitive named-verb
+        # patterns match ("Works at X" -> "Erin works at X").
+        verb = verb[:1].lower() + verb[1:]
+        return f"{self._last_subject} {verb}"
+
     def extract(self, text: str, *, speaker: str | None = None,
-                ref_ts: float | None = None) -> list[dict]:
+                ref_ts: float | None = None,
+                resolve_role: Callable[[str], str | None] | None = None) -> list[dict]:
         """``ref_ts`` (the observation's wall clock) is used only when ``resolve_dates`` is
-        set: a date stated in a clause resolves against it to the fact's ``valid_from``."""
+        set: a date stated in a clause resolves against it to the fact's ``valid_from``.
+
+        ``resolve_role`` (a backend-supplied "role noun -> sole holder or None" lookup) is
+        used only when ``resolve_definite_np`` is set, to resolve definite-NP subjects."""
         if speaker:
             text = resolve_first_person(text, speaker)
         facts: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
         for clause in _CLAUSE_SPLIT_RE.split(text):
             resolved = self._resolve_pronoun(clause)
+            if self.resolve_definite_np and resolved is clause and resolve_role is not None:
+                resolved = self._resolve_definite_np(clause, resolve_role)
+            if self.resolve_definite_np and resolved is clause:
+                resolved = self._resolve_ellipsis(clause)
             fact = self._parse_clause(resolved)
             if fact is None:
                 continue
