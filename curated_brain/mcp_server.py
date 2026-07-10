@@ -17,15 +17,23 @@ import time
 
 from curated_brain.backend import CuratedBrain
 from curated_brain.extraction import HeuristicExtractor
+from curated_brain.store import SqliteStore
 
 
 class MemoryService:
     """The Curated Brain operations exposed over MCP, as plain (testable) methods.
 
     Defaults to the deterministic no-LLM :class:`HeuristicExtractor` so raw text sent by an
-    agent populates the structured tier with no spoon-fed facts. Pass ``path`` to persist the
-    store to disk (atomic tmp+rename; ``persist_every`` batches writes to amortize the
-    O(store) snapshot cost — the store is also flushed on ``consolidate``).
+    agent populates the structured tier with no spoon-fed facts.
+
+    Two persistence modes, mutually exclusive:
+
+    * ``store_path`` — durable SQLite with an incremental journal (:class:`SqliteStore` +
+      ``attach_store``). Each write appends one O(1) journal row; a full snapshot is only
+      rewritten periodically (compaction). This is the recommended mode: it fixes the
+      O(store-size) full-snapshot cost paid on every write in the ``path`` mode.
+    * ``path`` — legacy full-JSON snapshot (atomic tmp+rename; ``persist_every`` batches writes
+      to amortize the O(store) snapshot cost; also flushed on ``consolidate``). Unchanged.
 
     Timestamps: the core is clock-free by contract (the harness supplies time), but a live
     agent host has no harness — so THIS boundary defaults to wall-clock. The old defaults
@@ -37,12 +45,21 @@ class MemoryService:
     atomic as a unit, and MCP hosts may issue concurrent tool calls."""
 
     def __init__(self, cb: CuratedBrain | None = None, *, path: str | None = None,
-                 persist_every: int = 1) -> None:
+                 persist_every: int = 1, store_path: str | None = None,
+                 compact_every: int = 256) -> None:
+        if path and store_path:
+            raise ValueError("pass path= OR store_path=, not both")
         self.cb = cb or CuratedBrain(seed=0, extractor=HeuristicExtractor())
         self._path = path
         self._persist_every = max(1, persist_every)
         self._dirty = 0
         self._lock = threading.Lock()
+        # Durable journaled store: attach_store restores existing state then journals each write
+        # (O(1)) instead of the full-JSON snapshot the path= mode rewrites. Owned here so it is
+        # closed with the service; the brain journals to it inside its own locked write path.
+        self._store = SqliteStore(store_path) if store_path else None
+        if self._store is not None:
+            self.cb.attach_store(self._store, compact_every=compact_every)
 
     def write(self, observation: str, session_id: str = "default",
               timestamp: float | None = None, speaker: str = "User") -> dict:
@@ -81,10 +98,20 @@ class MemoryService:
             return {"episodic": s.episodic_count, "structured": s.structured_count,
                     "semantic": s.semantic_count, "bytes": s.bytes}
 
+    def close(self) -> None:
+        """Release the durable store (if any). Idempotent; safe after the process is done."""
+        with self._lock:
+            if self._store is not None:
+                self.cb.detach_store()
+                self._store.close()
+                self._store = None
+
     def _persist(self) -> None:
         """Atomic durable save (tmp + rename): a crash mid-write can no longer truncate the
-        store file. Callers hold the lock."""
-        if not self._path:
+        store file. Callers hold the lock. No-op in store_path mode — the attached SqliteStore
+        journals every write itself, so we must NOT also rebuild the full snapshot here (that is
+        exactly the O(store-size) per-write cost this backend removes)."""
+        if self._store is not None or not self._path:
             return
         tmp = f"{self._path}.tmp"
         self.cb.save(tmp)

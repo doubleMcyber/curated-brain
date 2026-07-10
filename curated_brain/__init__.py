@@ -34,6 +34,7 @@ from curated_brain.providers import (
     SentenceTransformerEmbedder,
     TransformersLLM,
 )
+from curated_brain.store import SqliteStore
 
 try:
     __version__ = _pkg_version("curated-brain")
@@ -47,6 +48,7 @@ __all__ = [
     "MemoryBackend",
     "NamespacedMemory",
     "Pricing",
+    "SqliteStore",
     "resolve_first_person",
     # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
     "Embedder",

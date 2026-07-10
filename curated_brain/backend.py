@@ -18,6 +18,10 @@ import logging
 import math
 import threading
 from dataclasses import MISSING
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from curated_brain.store import SqliteStore
 
 from curated_brain.config import CBConfig
 from curated_brain.consolidation import cluster_by_similarity, representative
@@ -170,6 +174,13 @@ class CuratedBrain(MemoryBackend):
         # call one another (e.g. stats() -> snapshot()); private helpers stay lock-free. It is
         # runtime-only state, never serialized (see _state()), so determinism is unaffected.
         self._lock = threading.RLock()
+        # Durable-store attachment (see attach_store). None until attached. `_replaying` guards
+        # the journal-replay path so replayed writes are not re-journaled; `_journal_since`
+        # counts journal rows since the last compaction to fire compact_every.
+        self._store: SqliteStore | None = None
+        self._compact_every = 0
+        self._journal_since = 0
+        self._replaying = False
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
@@ -221,8 +232,20 @@ class CuratedBrain(MemoryBackend):
     def write(self, observation: str, *, session_id: str, timestamp: float,
               metadata: dict | None = None) -> WriteReceipt:
         with self._lock:
-            return self._write(observation, session_id=session_id, timestamp=timestamp,
-                               metadata=metadata)
+            receipt = self._write(observation, session_id=session_id, timestamp=timestamp,
+                                  metadata=metadata)
+            # Journal only AFTER _write returns — a write whose validation raised never reaches
+            # here, so the journal holds successful writes only and a replay can never re-hit a
+            # validation error. Skipped while replaying (the replayed op is already in the
+            # journal — re-journaling would duplicate it and desync compaction counting).
+            if self._store is not None and not self._replaying:
+                self._store.append("write", {"observation": observation,
+                                             "session_id": session_id, "timestamp": timestamp,
+                                             "metadata": metadata})
+                self._journal_since += 1
+                if self._journal_since >= self._compact_every:
+                    self._compact_store()
+            return receipt
 
     def _write(self, observation: str, *, session_id: str, timestamp: float,
                metadata: dict | None = None) -> WriteReceipt:
@@ -390,9 +413,16 @@ class CuratedBrain(MemoryBackend):
 
         Documented limit: a free-text record that merely MENTIONS the entity with no
         extracted fact link is not traceable to it and remains — full text-level erasure
-        needs a scan the caller can do via the returned report + their own audit."""
+        needs a scan the caller can do via the returned report + their own audit.
+
+        Store semantics: forget mutates state OUTSIDE the write stream (it deletes, not
+        appends), so a journal replay could not reproduce it. When a store is attached we
+        compact immediately after — the new snapshot captures the post-forget state and the
+        journal restarts empty."""
         with self._lock:
-            return self._forget(subject, predicate=predicate)
+            out = self._forget(subject, predicate=predicate)
+            self._compact_if_attached()
+            return out
 
     def _forget(self, subject: str, *, predicate: str | None = None) -> dict:
         self._derived = None
@@ -606,9 +636,15 @@ class CuratedBrain(MemoryBackend):
         claim (dedup), and outdated (superseded-value) raw episodes are pruned — the value
         history lives non-lossily in the structured tier. Remaining free-text episodes have
         only true near-duplicates merged. Structured facts and provenance are never touched,
-        so accuracy is preserved and the audit trail is intact."""
+        so accuracy is preserved and the audit trail is intact.
+
+        Store semantics: consolidation rewrites the episodic tier in place (prune/merge), which
+        a journal replay of raw writes could not reproduce — so when a store is attached we
+        compact immediately after, snapshotting the consolidated state."""
         with self._lock:
-            return self._consolidate()
+            rep = self._consolidate()
+            self._compact_if_attached()
+            return rep
 
     def _consolidate(self) -> ConsolidationReport:
         self._derived = None
@@ -744,8 +780,11 @@ class CuratedBrain(MemoryBackend):
         }
 
     def reset(self) -> None:
+        # Store semantics: reset clears state outside the write stream; compact immediately so a
+        # reopen reflects the empty store (not the pre-reset journal). See _compact_if_attached.
         with self._lock:
             self._reset()
+            self._compact_if_attached()
 
     def _reset(self) -> None:
         self._derived = None
@@ -816,8 +855,12 @@ class CuratedBrain(MemoryBackend):
                               allow_nan=False).encode("utf-8")
 
     def restore(self, blob: bytes) -> None:
+        # Store semantics: restore replaces state wholesale; compact immediately so the snapshot
+        # matches the restored state and the old journal is discarded. Skipped during attach's
+        # own replay (guarded by _replaying inside _compact_if_attached).
         with self._lock:
             self._restore(blob)
+            self._compact_if_attached()
 
     def _restore(self, blob: bytes) -> None:
         # Snapshots carry data, not tuning: CBConfig is not persisted, so retrieval/vector
@@ -886,3 +929,63 @@ class CuratedBrain(MemoryBackend):
         with self._lock:
             with open(path, "rb") as fh:
                 self.restore(fh.read())
+
+    # -------------------------------------------------------- durable store (journal) --
+    def attach_store(self, store: SqliteStore, *, compact_every: int = 256) -> None:
+        """Attach a durable :class:`~curated_brain.store.SqliteStore` for incremental, O(1)
+        per-write persistence (replacing the O(store-size) full-snapshot ``save`` on every
+        write).
+
+        On attach: if the store already holds state, this brain is rebuilt from it — the last
+        snapshot via the normal :meth:`restore` (validators and all), then every journaled write
+        re-executed through the normal write path. Because writes are deterministic in their raw
+        args, the replay reproduces byte-identical state. Afterwards each successful
+        :meth:`write` appends one journal row; every ``compact_every`` rows (and each
+        consolidate/forget/reset/restore) triggers a full-snapshot compaction.
+
+        Attaching must not change in-memory behavior: replay runs through the same code that
+        produced the original state, so :meth:`snapshot` bytes and query results are unchanged.
+        """
+        if compact_every < 1:
+            raise ValueError(f"compact_every must be >= 1, got {compact_every!r}")
+        with self._lock:
+            blob, journal = store.load()
+            self._replaying = True  # guard: replayed writes/restore must not re-journal
+            try:
+                if blob is not None:
+                    self._restore(blob)
+                for op, payload in journal:
+                    # Only "write" ops are journaled (see write()); assert keeps an unknown op
+                    # from silently corrupting the rebuild.
+                    assert op == "write", f"unknown journal op {op!r}"
+                    self._write(payload["observation"], session_id=payload["session_id"],
+                                timestamp=payload["timestamp"], metadata=payload["metadata"])
+            finally:
+                self._replaying = False
+            # Bind the store, then snapshot the freshly-rebuilt state as the new baseline so the
+            # journal starts empty (a torn crash after this replays nothing until the next write).
+            self._store = store
+            self._compact_every = compact_every
+            self._journal_since = 0
+            store.compact(self.snapshot())
+
+    def detach_store(self) -> None:
+        """Stop journaling to the attached store (leaves it as-is on disk). No-op if none."""
+        with self._lock:
+            self._store = None
+            self._compact_every = 0
+            self._journal_since = 0
+
+    def _compact_store(self) -> None:
+        """Write a fresh full snapshot to the store and reset the journal counter. Callers hold
+        the lock and have already checked a store is attached."""
+        assert self._store is not None
+        self._store.compact(self.snapshot())
+        self._journal_since = 0
+
+    def _compact_if_attached(self) -> None:
+        """Compact after a state-replacing op (consolidate/forget/reset/restore) that a journal
+        replay could not reproduce. No-op during attach's own replay (the replay guard) so the
+        rebuild is not snapshotted mid-flight."""
+        if self._store is not None and not self._replaying:
+            self._compact_store()
