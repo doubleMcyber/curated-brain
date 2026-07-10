@@ -4,6 +4,8 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly (Mon 06:00 UTC) — runs the CB_SLOW slow lane
 
 jobs:
   gate:
@@ -35,7 +37,32 @@ jobs:
         run: mypy
 
       - name: Test
-        run: pytest -q
+        run: pytest -q --cov=curated_brain --cov-report=term
+
+  slow:
+    name: slow lane (CB_SLOW, weekly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # [scale] is needed so the CB_SLOW-gated load test (which requires hnswlib) actually
+      # RUNS here instead of skipping — the whole point of this lane.
+      - name: Install (dev + scale — no model stack)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,scale]"
+
+      # The slow lane runs the same offline gate with CB_SLOW=1 so any longer-running,
+      # slow-gated tests execute. CB_LIVE is intentionally NOT set here — the real-model
+      # tests need a local model and stay a local-nightly concern (see CONTRIBUTING.md).
+      - name: Test (slow lane)
+        run: CB_SLOW=1 python -m pytest -q
 
   integrations:
     name: adoption extras (mcp + langchain + llama-index + scale)

@@ -21,6 +21,23 @@ mypy curated_brain
 All three are enforced in CI. Real-model tests are gated behind `CB_LIVE=1` and skip by
 default, so the gate runs offline and deterministically with no model weights or network.
 
+### Test lanes
+
+- **Default gate** (CI on every push/PR, and what you run locally): fast, offline, on the
+  deterministic fakes. `tests/test_determinism_hash.py` is the Gate A anchor — it pins a
+  sha256 over a fixed workload's `snapshot()` and query outputs. An intentional behavior
+  change must re-pin that hash in the same commit with a justification.
+- **Slow lane** (`CB_SLOW=1`, scheduled weekly in CI): runs any longer slow-gated tests.
+- **Live lane** (`CB_LIVE=1`, local only, never in CI): the real-model tests; needs the
+  `[local]` extra and a local model (e.g. Ollama).
+
+Local nightly, to exercise everything before a release:
+
+```bash
+CB_SLOW=1 python -m pytest -q                 # slow lane
+CB_LIVE=1 python -m pytest -q -k live         # real-model lane (needs [local] + a model)
+```
+
 ## Conventions
 
 - **Keep the deterministic fakes as the default test doubles.** Real providers plug in behind
