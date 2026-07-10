@@ -168,7 +168,8 @@ class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None, max_context_items: int | None = None,
-                 summarizer=None, pricing=None, config: CBConfig | None = None) -> None:
+                 summarizer=None, pricing=None, config: CBConfig | None = None,
+                 index_factory=None, ann_path: str | None = None) -> None:
         # Coarse-grained reentrant lock: every public entry point acquires it, so all state
         # reads/mutations serialize within one process. RLock (not Lock) because public methods
         # call one another (e.g. stats() -> snapshot()); private helpers stay lock-free. It is
@@ -221,7 +222,22 @@ class CuratedBrain(MemoryBackend):
         # Optional Pricing (token→$): when set, metrics()["cost"]["estimated_usd"] reports the
         # dollar cost of the metered hot-path tokens. Default None → cost stays token-only.
         self.pricing = pricing
+        # Opt-in ANN scale seam (Track C). ``index_factory`` (dim -> VectorIndex) makes the
+        # vector tier remember its index TYPE so restore()/reset() rebuild it as itself instead
+        # of demoting to BruteForce; ``ann_path`` is the optional on-disk sidecar so a large
+        # store reloads the saved graph instead of rebuilding it. Both default to None, which
+        # is byte-identical to the exact BruteForce default (AC-1 determinism unaffected).
+        self._index_factory = index_factory
+        self._ann_path = ann_path
         self.reset()
+
+    def _new_vector_tier(self) -> VectorTier:
+        """Construct the vector tier with this brain's config + optional ANN seam. One place so
+        reset() and restore() stay consistent (the restore path is where demotion used to
+        bite)."""
+        return VectorTier(self.embedder, w_sem=self.config.w_sem, w_lex=self.config.w_lex,
+                          overfetch=self.config.overfetch, index_factory=self._index_factory,
+                          ann_path=self._ann_path)
 
     # ------------------------------------------------------------------ identifiers --
     def _next_id(self, kind: str) -> str:
@@ -795,8 +811,7 @@ class CuratedBrain(MemoryBackend):
         if self.extractor is not None and hasattr(self.extractor, "reset"):
             self.extractor.reset()  # clear any coreference context tied to the old store
         self.structured = StructuredTier()
-        self.vector = VectorTier(self.embedder, w_sem=self.config.w_sem,
-                                 w_lex=self.config.w_lex, overfetch=self.config.overfetch)
+        self.vector = self._new_vector_tier()
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._resolver = EntityResolver()  # owns the entity vocabulary (`_entities` reads through)
         self._session_ts = {}
@@ -892,8 +907,7 @@ class CuratedBrain(MemoryBackend):
         self._ep_by_id = {r.id: r for r in self._episodes}
         self.structured = StructuredTier()
         self.structured.load(state.get("structured", []))
-        self.vector = VectorTier(self.embedder, w_sem=self.config.w_sem,
-                                 w_lex=self.config.w_lex, overfetch=self.config.overfetch)
+        self.vector = self._new_vector_tier()
         if state.get("vector"):
             self.vector.load(state["vector"])
         self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()
@@ -924,6 +938,10 @@ class CuratedBrain(MemoryBackend):
         with self._lock:
             with open(path, "wb") as fh:
                 fh.write(self.snapshot())
+            # Opt-in fast path: when an ANN sidecar is configured and the live index supports a
+            # native save, persist the built graph next to the snapshot so load() can skip the
+            # rebuild. A no-op for the BruteForce default (its vectors live in the snapshot).
+            self.vector.save_sidecar()
 
     def load(self, path: str) -> None:
         """Reopen a store previously written by :meth:`save`, replacing current state."""

@@ -9,6 +9,7 @@ a dot product. Vectors serialize as exact hex bytes, keeping snapshots byte-dete
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import MISSING, dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -121,6 +122,9 @@ class HnswIndex:
         self._idx.init_index(max_elements=max_elements, ef_construction=ef_construction,
                              M=m, random_seed=seed)
         self._ef = ef
+        # Deterministic rebuild knobs retained so a factory can reconstruct an identical graph.
+        self._m = m
+        self._seed = seed
         self._idx.set_ef(ef)
         self._idx.set_num_threads(1)
         self._live: set[int] = set()
@@ -170,6 +174,46 @@ class HnswIndex:
         """Full ranking (protocol compatibility, so the tier's filter-then-take-k works)."""
         return self.topk(vector, len(self._live))
 
+    # ------------------------------------------------------------- on-disk sidecar --
+    @property
+    def count(self) -> int:
+        """Elements stored in the graph (``add_items`` count) — the sidecar-validity check
+        compares this against the tier's record count so a stale/foreign index is rejected
+        before it can answer wrong. Distinct from ``len(self._live)``, which excludes
+        mark-deleted keys and is empty right after a bare ``load`` (before _live is re-derived).
+        """
+        return self._added
+
+    def save(self, path: str) -> None:
+        """Persist the built HNSW graph to ``path`` via hnswlib's native ``save_index`` so a
+        large store can reload in O(n) instead of rebuilding the graph in O(n log n)."""
+        self._idx.save_index(path)
+
+    @classmethod
+    def load(cls, path: str, dim: int, *, max_elements: int = 1024, ef_construction: int = 200,
+             m: int = 16, ef: int = 200, seed: int = 100) -> HnswIndex:
+        """Reload a graph saved by :meth:`save`. Deterministic knobs mirror the ctor so a
+        reloaded index behaves identically to a freshly rebuilt one; the caller re-populates
+        ``_live`` from the record keys (the mark-deleted set is not carried in the sidecar)."""
+        try:
+            import hnswlib  # type: ignore[import-untyped]
+        except ImportError as e:  # pragma: no cover - exercised only without the extra
+            raise RuntimeError(
+                "HnswIndex requires hnswlib: pip install 'curated-brain[scale]'") from e
+        idx = cls.__new__(cls)
+        idx.dim = dim
+        idx._idx = hnswlib.Index(space="ip", dim=dim)
+        idx._idx.load_index(path, max_elements=max_elements)
+        idx._cap = idx._idx.get_max_elements()
+        idx._ef = ef
+        idx._m = m
+        idx._seed = seed
+        idx._idx.set_ef(ef)
+        idx._idx.set_num_threads(1)
+        idx._live = set()
+        idx._added = idx._idx.get_current_count()
+        return idx
+
 
 @dataclass
 class VectorRecord:
@@ -191,10 +235,24 @@ _VECTOR_RECORD_REQUIRED = frozenset(
     if f.default is MISSING and f.default_factory is MISSING)
 
 
+def _factory_for(index: VectorIndex | None) -> Callable[[int], VectorIndex]:
+    """Infer a rebuild factory (dim -> fresh index of the same TYPE) from an index instance,
+    so a tier constructed with a bare ``index=`` still remembers what to rebuild on load. For
+    HnswIndex the deterministic knobs (ef/M/seed) are carried through so a rebuilt graph is
+    identical to the original; other/None indexes fall back to the exact BruteForceIndex."""
+    if isinstance(index, HnswIndex):
+        ef, m, seed = index._ef, index._m, index._seed
+        return lambda dim: HnswIndex(dim, ef=ef, m=m, seed=seed)
+    return BruteForceIndex
+
+
 class VectorTier:
     """Embedded records + metadata-filtered ANN search (PRD §7 step 2)."""
 
-    def __init__(self, embedder, *, index=None, w_sem: float = _W_SEM, w_lex: float = _W_LEX,
+    def __init__(self, embedder, *, index=None,
+                 index_factory: Callable[[int], VectorIndex] | None = None,
+                 ann_path: str | None = None,
+                 w_sem: float = _W_SEM, w_lex: float = _W_LEX,
                  overfetch: int = _OVERFETCH) -> None:
         self.embedder = embedder
         # Hybrid-scoring weights + ANN over-fetch, defaulted to the module constants so the
@@ -202,10 +260,21 @@ class VectorTier:
         self.w_sem = w_sem
         self.w_lex = w_lex
         self.overfetch = overfetch
+        # ``index_factory`` (dim -> VectorIndex) is how the tier REMEMBERS its index type so a
+        # non-serializable ANN index rebuilds as itself on load/reembed instead of silently
+        # demoting to BruteForce. Default factory is the exact BruteForceIndex — so the default
+        # tier is byte-identical and its snapshot still stores the exact vectors. A bare
+        # ``index=HnswIndex(...)`` (the old API) infers a matching factory from the instance's
+        # type, so existing Hnsw-backed callers survive restore without any extra wiring.
+        self._index_factory = index_factory or _factory_for(index)
         # Default is the exact, byte-deterministic BruteForceIndex (AC-1). Pass a real ANN
         # backend (HnswIndex) for scale — it exposes ``topk``, which `search`/`nearest` use as
-        # a sublinear fast path; snapshot/re-embed remain BruteForce features.
-        self.index = index if index is not None else BruteForceIndex(embedder.dim)
+        # a sublinear fast path.
+        self.index = index if index is not None else self._index_factory(embedder.dim)
+        # Optional on-disk ANN sidecar (opt-in fast path): when set and the index supports
+        # native save/load, load() tries the sidecar before rebuilding, and CuratedBrain.save()
+        # writes it. Never auto-saved — an explicit save keeps the seam least-surprising.
+        self.ann_path = ann_path
         self.meta: dict[int, VectorRecord] = {}
         self._next = 0
 
@@ -295,16 +364,21 @@ class VectorTier:
         are preserved (non-lossy — only the vectors change). Returns the count migrated.
 
         Deterministic: records are visited in insertion order, so a re-embed reproduces a
-        byte-identical index for the same inputs and model. Note: the rebuilt index is always
-        an exact BruteForceIndex, so re-embedding an opt-in HnswIndex tier demotes it to brute
-        force (re-wrap in an HnswIndex afterwards if scale still demands it).
+        byte-identical index for the same inputs and model. The rebuilt index keeps the tier's
+        configured TYPE (via ``index_factory``), so re-embedding an HnswIndex tier stays HNSW
+        instead of demoting to brute force.
         """
         self.embedder = new_embedder
-        new_index = BruteForceIndex(new_embedder.dim)
-        for key, rec in self.meta.items():
-            new_index.add(key, new_embedder.embed(rec.text))
-        self.index = new_index
+        self.index = self._rebuild_index(new_embedder.dim)
         return len(self.meta)
+
+    def _rebuild_index(self, dim: int) -> VectorIndex:
+        """Fresh index of the tier's configured type, re-populated from the stored records in
+        insertion order (deterministic — same records give the same graph and query results)."""
+        index = self._index_factory(dim)
+        for key, rec in self.meta.items():
+            index.add(key, self.embedder.embed(rec.text))
+        return index
 
     def __len__(self) -> int:
         return len(self.meta)
@@ -348,11 +422,55 @@ class VectorTier:
         self._next = d["next"]
         self.meta = meta
         if d.get("index"):
+            # Serializable index (the byte-deterministic BruteForce default): restore exact
+            # vectors. Unchanged from before — the default path is untouched.
             self.index = BruteForceIndex.from_dict(d["index"])
         else:
-            # ANN-serialized tier: rebuild exactly by re-embedding the stored texts
-            # (deterministic for a deterministic embedder). Note the demotion: the restored
-            # tier runs on BruteForceIndex — re-wrap in an HnswIndex if scale demands it.
-            self.index = BruteForceIndex(self.embedder.dim)
-            for key, rec in self.meta.items():
-                self.index.add(key, self.embedder.embed(rec.text))
+            # Records-only tier (a non-serializable ANN index): rebuild the SAME index type via
+            # the factory. An opt-in on-disk sidecar is the fast path — load the saved graph if
+            # it exists AND matches this record set (count/dim); on any mismatch or corruption
+            # WARN and fall back to an O(n log n) rebuild (loud, never silently wrong).
+            self.index = self._load_or_rebuild(self.embedder.dim)
+
+    def _load_or_rebuild(self, dim: int) -> VectorIndex:
+        if self.ann_path is not None:
+            loaded = self._load_sidecar(dim)
+            if loaded is not None:
+                return loaded
+        return self._rebuild_index(dim)
+
+    def _load_sidecar(self, dim: int) -> VectorIndex | None:
+        """Try the on-disk ANN sidecar. Returns the loaded index on a clean match, else None
+        (with a WARNING) so the caller rebuilds. The factory must produce an index that can
+        ``load`` (HnswIndex); anything else falls through to rebuild."""
+        import os
+
+        assert self.ann_path is not None
+        if not os.path.exists(self.ann_path):
+            return None
+        probe = self._index_factory(dim)
+        loader = getattr(type(probe), "load", None)
+        if loader is None:
+            logger.warning("ANN sidecar %s ignored: index type %s has no load()",
+                           self.ann_path, type(probe).__name__)
+            return None
+        try:
+            index = loader(self.ann_path, dim)
+            count = getattr(index, "count", None)
+            if count != len(self.meta):
+                logger.warning("ANN sidecar %s has %s vectors but tier has %d records; "
+                               "rebuilding", self.ann_path, count, len(self.meta))
+                return None
+            # The sidecar carries the graph but not the live-key set — re-derive it from the
+            # record keys so deletion/topk filtering behaves like a fresh index.
+            index._live = set(self.meta.keys())
+            return index
+        except Exception as e:  # noqa: BLE001 - any corrupt/foreign file must fall back, loudly
+            logger.warning("ANN sidecar %s failed to load (%s); rebuilding", self.ann_path, e)
+            return None
+
+    def save_sidecar(self) -> None:
+        """Write the ANN graph to ``ann_path`` if configured and the index supports it. No-op
+        otherwise. Explicit (never auto-saved) so persistence stays a deliberate call site."""
+        if self.ann_path is not None and hasattr(self.index, "save"):
+            self.index.save(self.ann_path)
