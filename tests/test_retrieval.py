@@ -236,6 +236,109 @@ def test_relation_auto_detection_enables_arbitrary_multihop():
     assert "Berlin" in ctx  # end-to-end: chain resolves Alice -> Acme -> Berlin
 
 
+def _mgr_chain_brain():
+    # Alice -> Bob -> Carol -> Dave manager chain; cities on the tail two so 3- and 4-hop
+    # queries land on distinct answers. Each object is itself a known entity, so "manager"
+    # auto-detects as a relation and the chain is traversable at any depth.
+    cb = CuratedBrain(seed=0)
+    for s, p, o, ts in (("Alice", "manager", "Bob", 0.0), ("Bob", "manager", "Carol", 1.0),
+                        ("Carol", "manager", "Dave", 2.0), ("Carol", "city", "Paris", 3.0),
+                        ("Dave", "city", "Berlin", 4.0)):
+        cb.write(f"{s}'s {p} is {o}.", session_id=f"s{int(ts)}", timestamp=ts,
+                 metadata={"fact": {"subject": s, "predicate": p, "object": o}})
+    return cb
+
+
+def test_three_hop_chain_resolves_and_cites_every_hop():
+    # "X's manager's manager's city" -> a depth-3 chain (two relations + fronted attribute).
+    # The planner recovers the ordered run; the answer is the manager-of-manager's city and
+    # every fact traversed is cited so the whole support set is attributable.
+    cb = _mgr_chain_brain()
+    q = "What city does Alice's manager's manager live in?"
+    plan = cb.planner.plan(q, entities=cb._entities,
+                           predicates=frozenset({"manager", "city"}),
+                           relation_preds=frozenset({"manager"}), session_ts=cb._session_ts)
+    assert plan.hops == ["manager", "manager", "city"]
+    assert cb.answer_path("Alice", ["manager", "manager", "city"]) == "Paris"
+    r = cb.query(q, session_id="q", timestamp=10.0)
+    assert "Paris" in r.context  # Alice -> Bob -> Carol -> Paris
+    assert sum(1 for c in r.citations if "wall_ts" in c.provenance) >= 3  # all three hops cited
+
+
+def test_four_hop_chain_resolves_end_to_end():
+    # Depth-4: three manager relations then the fronted "city" attribute.
+    cb = _mgr_chain_brain()
+    q = "What is Alice's manager's manager's manager's city?"
+    plan = cb.planner.plan(q, entities=cb._entities,
+                           predicates=frozenset({"manager", "city"}),
+                           relation_preds=frozenset({"manager"}), session_ts=cb._session_ts)
+    assert plan.hops == ["manager", "manager", "manager", "city"]
+    assert cb.answer_path("Alice", ["manager", "manager", "manager", "city"]) == "Berlin"
+    r = cb.query(q, session_id="q", timestamp=10.0)
+    assert "Berlin" in r.context  # Alice -> Bob -> Carol -> Dave -> Berlin
+    assert sum(1 for c in r.citations if "wall_ts" in c.provenance) >= 4
+
+
+def test_chain_with_trailing_possessive_attribute():
+    # Mixed relations with the attribute inside the possessive run ("...mentor's email"),
+    # not fronted — the run itself carries the trailing attribute.
+    cb = CuratedBrain(seed=0)
+    for s, p, o, ts in (("Alice", "manager", "Bob", 0.0), ("Bob", "mentor", "Carol", 1.0),
+                        ("Carol", "email", "carol@x.com", 2.0)):
+        cb.write(f"{s}'s {p} is {o}.", session_id=f"s{int(ts)}", timestamp=ts,
+                 metadata={"fact": {"subject": s, "predicate": p, "object": o}})
+    q = "What is Alice's manager's mentor's email?"
+    plan = cb.planner.plan(q, entities=cb._entities, session_ts=cb._session_ts,
+                           predicates=frozenset({"manager", "mentor", "email"}),
+                           relation_preds=frozenset({"manager", "mentor"}))
+    assert plan.hops == ["manager", "mentor", "email"]
+    assert "carol@x.com" in cb.query(q, session_id="q", timestamp=10.0).context
+
+
+def test_broken_chain_degrades_gracefully():
+    # A missing middle hop (Bob has no manager) must not crash: the chain resolves to None,
+    # the query falls back to the structured backstop and still returns a sensible payload.
+    cb = CuratedBrain(seed=0)
+    cb.write("Alice's manager is Bob.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "manager", "object": "Bob"}})
+    cb.write("Bob lives in Berlin.", session_id="s1", timestamp=1.0,
+             metadata={"fact": {"subject": "Bob", "predicate": "city", "object": "Berlin"}})
+    q = "What city does Alice's manager's manager live in?"
+    plan = cb.planner.plan(q, entities=cb._entities,
+                           predicates=frozenset({"manager", "city"}),
+                           relation_preds=frozenset({"manager"}), session_ts=cb._session_ts)
+    assert plan.hops == ["manager", "manager", "city"]  # chain parsed
+    r = cb.query(q, session_id="q", timestamp=10.0)  # must not raise
+    assert r.context  # backstop still surfaces Alice's known facts
+    assert "Bob" in r.context
+
+
+# Plan-identity pins: for questions that produce a 2-hop / single-hop / open plan today, the
+# generalized planner must produce the IDENTICAL QueryPlan (the no-op condition). Expected
+# fields are hard-coded from the CURRENT code, run before the planner was generalized.
+_PLAN_PINS = [
+    ("What is Alice's email address?", "alice", "email", None, False, False),
+    ("What city does Alice's manager live in?", "alice", "city", ["manager", "city"],
+     False, False),
+    ("Where did Alice live as of session 29?", "alice", "city", None, True, False),
+    ("Tell me something interesting.", None, None, None, False, True),
+    ("Who is Alice's manager?", "alice", "manager", None, False, False),
+    ("Where does Alice live now?", "alice", "city", None, False, False),
+    ("What is Alice's current role?", "alice", "role", None, False, False),
+]
+
+
+def test_plan_identity_unchanged_on_existing_questions():
+    ds = generate(seed=0)
+    cb, *_ = _feed_all(ds)
+    pv, rp, _ = cb._derived_state()
+    for q, ent, pred, hops, has_asof, open_ended in _PLAN_PINS:
+        p = cb.planner.plan(q, entities=cb._entities, predicates=pv, relation_preds=rp,
+                            session_ts=cb._session_ts)
+        assert (p.entity, p.predicate, p.hops, p.as_of is not None, p.open_ended) == (
+            ent, pred, hops, has_asof, open_ended), q
+
+
 def test_fuse_drops_superseded_values():
     hits = [
         (VectorRecord(rid="1", text="Alice lives in Berlin.", wall_ts=1.0, session_id="s"), 0.9),

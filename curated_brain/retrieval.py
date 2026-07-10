@@ -75,12 +75,28 @@ class Planner:
         attr = [p for p in preds if p not in is_rel]
         hops: list[str] | None = None
         predicate: str | None = None
-        if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
-            hops, predicate = [rel[0], attr[0]], attr[0]
-        elif rel:
-            predicate = rel[0]
-        elif attr:
-            predicate = attr[0]
+        # Arbitrary-depth possessive chains ("X's manager's manager's city"): read the ordered
+        # run of predicate tokens after the entity. A run of >= 2 relations is a genuinely
+        # deeper chain than the single-relation case below handles, so parse the order here;
+        # everything with 0 or 1 relation falls through to the exact 2-hop/single-hop logic
+        # (byte-identical output preserved). The fronted attribute ("What CITY does X's
+        # manager's manager live in") is appended when the run itself carries no attribute.
+        chain = self._possessive_chain(question, entity, preds, is_rel) if entity else []
+        rels_in_chain = [p for p in chain if p in is_rel]
+        if len(rels_in_chain) >= 2:
+            if chain[-1] not in is_rel:  # trailing attribute already in the possessive run
+                hops = chain
+            elif attr:  # attribute was fronted -> relations in order, then the attribute
+                hops = [*rels_in_chain, attr[0]]
+            if hops:
+                predicate = hops[-1]
+        if hops is None:
+            if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
+                hops, predicate = [rel[0], attr[0]], attr[0]
+            elif rel:
+                predicate = rel[0]
+            elif attr:
+                predicate = attr[0]
 
         as_of: float | None = None
         ql = question.lower()
@@ -90,6 +106,48 @@ class Planner:
 
         return QueryPlan(entity=entity, predicate=predicate, hops=hops, as_of=as_of,
                          open_ended=entity is None or predicate is None)
+
+    @staticmethod
+    def _possessive_chain(question: str, entity: str, preds: list[str],
+                          is_rel: AbstractSet[str]) -> list[str]:
+        """The ordered predicate run of a possessive chain following ``entity``.
+
+        The tokenizer turns "X's manager's mentor" into ``[x, s, manager, s, mentor]``; walk
+        that stream from the entity, mapping each token to the predicate it denotes (a stored
+        predicate whose name contains the token, else a keyword predicate) and stopping at the
+        first token that denotes nothing. ``preds`` is the vocabulary already matched for this
+        question, so the mapping stays schema-driven — no predicate names hardcoded here.
+        Every non-final element must be a relation for the caller to treat the run as a chain;
+        this method just reports the ordered run and lets ``plan`` decide."""
+        # token -> predicate: a chain segment names predicate p when the segment is one of p's
+        # content tokens (covers multi-word "email address") or a keyword mapped to p.
+        tok2pred: dict[str, str] = {}
+        for p in preds:
+            for t in tokenize(p, drop_stop=True):
+                tok2pred.setdefault(t, p)
+        for p in preds:
+            for kw in PRED_KEYWORDS.get(p, ()):
+                tok2pred.setdefault(kw, p)
+        toks = tokenize(question, drop_stop=False)
+        try:
+            i = toks.index(entity) + 1
+        except ValueError:
+            return []
+        chain: list[str] = []
+        while i < len(toks):
+            t = toks[i]
+            if t == "s":  # the possessive marker between links
+                i += 1
+                continue
+            pred = tok2pred.get(t)
+            if pred is None:
+                break
+            chain.append(pred)
+            # After a relation, keep walking (the next link); after an attribute the chain ends.
+            if pred not in is_rel:
+                break
+            i += 1
+        return chain
 
 
 def render_fact(plan: QueryPlan, fact: Fact) -> str:
