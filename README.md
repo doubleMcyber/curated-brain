@@ -228,6 +228,31 @@ cb = CuratedBrain(surprise_llm=llm)   # costs one LLM call per gated write
 Enabling it adds one LLM call per write (metered as `metrics()["cost"]["surprise_calls"]`).
 With `surprise_llm=None` the write path is byte-identical to the default gate.
 
+## LLM consolidation summaries (opt-in)
+
+Consolidation merges near-duplicate and same-fact episodes into one semantic claim. By default
+the merged claim takes the cluster's representative member verbatim, which keeps only that one
+member's wording and drops the phrasing of the rest. Pass `summarizer=` to rewrite each
+multi-member cluster into a single sentence that carries every member's content forward instead.
+
+```python
+from curated_brain import CuratedBrain, OpenAICompatLLM
+
+llm = OpenAICompatLLM(base_url="http://localhost:11434/v1", model="qwen2.5:7b", temperature=0.0)
+cb = CuratedBrain(summarizer=llm)   # one LLM call per merged cluster during consolidate()
+cb.consolidate()
+```
+
+Enable it when consolidation is discarding wording you care about and you have a model to spend
+on it. The cost is one LLM call per merged cluster (clusters of one member are never summarized),
+paid during `consolidate()`, not on the query or write path. With `summarizer=None` consolidation
+is byte-identical to the extractive default.
+
+For reproducible CI, wrap the model in the [`cassette`](curated_brain/cassette.py) layer: record
+the real completions once, then replay them so the summarizer path runs deterministically with no
+model present (a replay miss raises, so the pinned output stays genuine). See
+`tests/test_summarizer.py` for the recorded qwen2.5:7b scenario.
+
 ## How it works
 
 | Layer | Module |
