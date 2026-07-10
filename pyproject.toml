@@ -25,7 +25,7 @@ Issues = "https://github.com/doubleMcyber/curated-brain/issues"
 Changelog = "https://github.com/doubleMcyber/curated-brain/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.8"]
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.4", "mypy>=1.8"]
 # Real local-model providers (curated_brain/providers.py). Absent by default so the
 # offline gate runs on the deterministic fakes; install to un-fake the pipeline.
 local = ["sentence-transformers>=2.2", "transformers>=4.40", "torch>=2.1"]
@@ -57,13 +57,16 @@ pythonpath = ["."]
 
 [tool.mypy]
 files = ["curated_brain"]
-python_version = "3.11"
+# No `python_version` pin: mypy targets whichever interpreter runs it (3.11 and 3.12 in CI).
+# Pinning 3.11 made mypy reject numpy 2.5.1's PEP-695 (`type` alias) stubs on the 3.12 runner;
+# per-runner targeting checks each supported version natively instead. Cross-version syntax is
+# still caught because the 3.11 CI job runs mypy under 3.11.
 
 # Only the optional heavy deps (unstubbed, not installed in the default gate) are treated as
 # Any — scoped per-module so a typo'd *internal* import is still flagged as a real error.
 [[tool.mypy.overrides]]
 module = ["torch.*", "transformers.*", "sentence_transformers.*", "hnswlib", "mcp.*",
-          "langchain_core.*", "llama_index.*"]
+          "langchain_core.*", "llama_index.*", "pydantic", "pydantic.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

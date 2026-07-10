@@ -4,7 +4,37 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
+Last updated: 2026-07-09 (**Tiers 1-3 improvement campaign COMPLETE: 12 of 13 workstreams
+SHIPPED on `claude/improvements-tier1-3`** — 12 reviewer-passed commits, gate 290 passed / 5
+skipped, ruff+mypy clean, Gate A hash 673a25c7 byte-identical at every commit. Landed: CBConfig,
+determinism-hash anchor + CI lanes, RLock, provider hardening, SQLite journal store, HNSW-survives-
+restore + ANN sidecar, MCP namespaces, logprob predictive surprise (PRD §6 #2 implemented, opt-in),
+n-hop planner chains, fuzzy entity fallback (opt-in), definite-NP/ellipsis coreference (opt-in,
+frozen-holdout-gated 28/28), preference path (opt-in after Gate A REJECTED the always-on form —
+firewall worked: hash 07760396 + precision 0.79→0.74 regression caught and reverted to opt-in,
+Gate A restored). The three user-approved compute runs then EXECUTED (2026-07-10): WS9 summarizer cassette
+RECORDED + reviewer-passed (`2240b4f` — 2 genuine qwen2.5:7b merges, fact-token coverage
+pinned); WS8b logprob cassette RECORDED + reviewer-passed (`e0b5b9b` — HONEST NEGATIVE pinned
+by equality assertion: mean-logprob estimator rescued 0/5 dead-zone updates on real 7B output,
+README now calls it experimental); WS13b preference benchmark run per pre-registration
+(harness `PREREG_preference_run.md`) — measured EXACTLY NULL (0.100 = 0.100, 0 gained/0 lost;
+lever barely engaged: 3/30 contexts carried a preference fact, 26/30 byte-identical) → adapter
+lever REVERTED per the frozen rule (harness `313b891`), library capability stays opt-in. Third
+consecutive category-lever null at the local 7B (temporal x2, preference x1): category gaps are
+answerer/extraction-bound at this scale. ALL 13 WORKSTREAMS CLOSED. Session plan:
+`~/.claude/plans/go-through-the-entire-structured-sparrow.md`; deferred Tier 4/5 items
+(diagnostic-suite CIs, extraction-ON full B-eval, `_s` n=140 completion, release cut 0.2.0,
+positioning) documented there. Prior line below.)
+Prior: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
+the benchmark half. NEW `curated_brain/dates.py` deterministic offline event-date resolver +
+opt-in `HeuristicExtractor(resolve_dates=True)` → facts get their TRUE valid_from ("moved two
+months ago" → 2 months before the session, not the session date): a real bi-temporal correctness
+capability, +19 tests, Gate A hash 673a25c7 byte-identical (opt-in), reviewer-checked. The
+benchmark bet — dated-turn ingest + temporal retrieval to close the temporal-reasoning gap — was
+measured null AGAIN (n=50 0.100→0.080, 0 gained/1 lost; temporal retrieval even EMPTIED context on
+one question) and reverted. Second consecutive null on the temporal-retrieval approach: at 7B the
+answerer/judge doesn't convert dated context into correct orderings. Prior line below.)
+Prior: 2026-07-03 (Track D EXECUTED on BOTH LongMemEval variants — regime-split result:
 oracle Letta 0.471 > CB 0.261 ~ Mem0 0.203 > Zep 0.065; `_s` CB 0.167 = Mem0 0.167, Letta
 0.083(partial n=12, ties CB 1/12 on the shared questions), Zep DNF, CB 8–24× cheaper. CB ≥ Mem0
 and CB ≥ Zep hold both variants; CB never posts an accuracy win over Letta (loses oracle, ties
@@ -531,9 +561,19 @@ Prioritized by (credibility)/(effort):
 2. **GPT-4o judge** in `bench_longmemeval.py` (route only the JUDGE call to GPT-4o, systems stay
    on the shared local model) — re-score existing frozen outputs, no re-run; cheapest
    leaderboard-credibility win.
-3. **Temporal-reasoning path** (`Planner.plan` new intent + wire `VectorTier.search`'s unused
-   `window` arg into `query()`; surface DATED lines, let the answer model do the arithmetic):
-   0.043 vs Letta 0.435. Gate A: QueryPlan diff = 0 on diagnostic probes.
+3. **Temporal-reasoning path — CLOSED as a retrieval-tuning target (two measured nulls).** Both
+   forms were built firewall-clean and measured before/after on the temporal subset, both null:
+   (i) date-on-retrieval with uniform session dates — 2026-07-06, n=50 0.100→0.100;
+   (ii) DISTINCT-dated ingest (`curated_brain/dates.py` resolving "two months ago" etc. to true
+   event dates) + temporal retrieval — 2026-07-07, n=50 0.100→0.080 (and it EMPTIED context on the
+   flagship question). The data supported the hypothesis (26/50 temporal questions carry a
+   resolvable in-text date), so the failure is downstream: **at the local 7B the answerer/judge
+   does not convert dated context into correct orderings**, and open-ended temporal retrieval is
+   fragile. Conclusion: distinct dates are not the bottleneck; **a credible temporal lift needs a
+   stronger answerer/judge (the hosted-endpoint dependency, item 4), not more retrieval tuning.**
+   The reusable win kept: `dates.py` + opt-in `HeuristicExtractor(resolve_dates=True)` (correct
+   bi-temporal valid_from for dated events) SHIPPED as a library capability. CB 0.043 vs Letta
+   0.435 stands, but is now understood as answerer/judge-bound, not retrieval-bound.
 4. **Hosted endpoint + n≈140 `_s` run to completion** (adapters already wired: CB
    OpenAICompatEmbedder, MEM0/ZEP_OPENAI_BASE, Letta handles): removes the throughput cap that
    caused Zep-DNF + Letta-partial; report CIs + McNemar. **Provisioning task, not engineering —
@@ -556,6 +596,121 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-09 (later) — **Tiers 2-3 complete: 8 more reviewer-passed commits.** `eaa42cf` WS5
+  SQLite journal store (reviewer caught 2 real bugs pre-commit: non-atomic compact under
+  autocommit — a torn compact LOST the snapshot, fixed with explicit BEGIN IMMEDIATE + verified
+  surviving a hard kill mid-transaction; thread-bound connection — fixed check_same_thread=False).
+  `dfeddd5` WS10 n-hop possessive chains (122/122 existing plans byte-identical vs base planner;
+  superseded intermediate hops respect bi-temporal current()). `44b58bb` WS11 opt-in query-side
+  fuzzy entity fallback (54/54 dataset plans identical with knob ON). `0a2d868` WS6 HNSW survives
+  restore + opt-in ANN sidecar (stale/corrupt sidecar → WARN + rebuild, never silent). `1abe682`
+  WS12 opt-in definite-NP/ellipsis coreference — the anti-tuning protocol held: 40-case holdout
+  fixture sha-frozen BEFORE implementation, 6 disclosed post-freeze text edits independently
+  adjudicated as genuine authoring errors (base-extractor trailing-adverb artifact reproduced from
+  git-archive base), 28/28 resolved / 0 false positives, both re-scored independently by the
+  reviewer; multi-speaker ellipsis limitation documented. `ed2a0c4` WS7 MCP namespace arg on every
+  tool + drop tool (store_path mode stays single-namespace and fails loud — honest limit).
+  `a411ecc` WS8 predictive logprob surprise (PRD §6 #2 resolved by IMPLEMENTING it, opt-in;
+  1-exp(mean logprob) fused as max(lexical, predictive); zero extra embedding passes; the
+  paraphrased-update dead zone now stores; Ollama logprobs support probed live). `7a3a777` WS13
+  preference path — **the firewall fired in anger:** the always-on form regressed Gate A
+  (hash 07760396, precision 0.79→0.74, contradiction 1.00→0.90) because preference verbs fire on
+  ordinary diagnostic observations; per the pre-registered protocol it shipped OPT-IN
+  (extract_preferences=True + schema-driven planner gate), Gate A re-run byte-identical. Every
+  commit: own Opus reviewer pass + pytest/ruff/mypy + external Gate A. Integration pattern that
+  worked: implementers in manual `git worktree add ... HEAD` worktrees (2 parallel max),
+  reviewers adversarial-by-instruction, orchestrator re-verifies + applies diffs with
+  `git apply -3` + re-runs both gates before each commit.
+- 2026-07-09 — **Tier-1 production hardening (4 reviewed commits on `claude/improvements-tier1-3`).**
+  New session plan approved (user-scoped to Tiers 1-3 of the 16-workstream improvement plan in
+  `~/.claude/plans/go-through-the-entire-structured-sparrow.md`; Tier-4 credibility runs + Tier-5
+  release cut deferred; every compute-heavy run needs an explicit user go-ahead). Landed, each
+  with its own Opus reviewer pass + full gate (pytest/ruff/mypy) + external Gate A re-run
+  (hash 673a25c7 byte-identical, precision 0.79 / contradiction 1.00 / staleness 0.00 unchanged):
+  (1) `99aa646` WS1 frozen `CBConfig` — typed config exposing max_context_items,
+  free_dedup_threshold, fuse weights (new W_REL/W_REC/W_IMP constants in retrieval.py),
+  half_life_seconds, gate params, vector w_sem/w_lex/overfetch; explicit ctor args win; reviewer
+  caught a dead `cluster_threshold` knob (removed) + undocumented restore-vs-config semantics
+  (documented: snapshots carry data, not tuning; the gate restores from the snapshot).
+  (2) `459312f` WS2 in-repo determinism anchor — `tests/test_determinism_hash.py` pins sha256
+  over a fixed seed-42 workload's snapshot() + query outputs (the Gate A anchor finally travels
+  with the repo); CI gains --cov + a weekly CB_SLOW schedule lane (reviewer caught that the lane
+  needed `[scale]` to actually run the hnswlib load test — fixed). NOTE: the built-in agent
+  worktree isolation branches from stale `main` (0b717fe) — pins had to be recomputed on HEAD;
+  use manual `git worktree add ... HEAD` for parallel implementers.
+  (3) `e600414` WS3 RLock — every CuratedBrain public method (AST-verified pure code-move into
+  _private helpers) + NamespacedMemory registry; lock never serialized; README concurrency
+  contract (thread-safe in-process, single-writer cross-process; namespaces stay concurrent).
+  (4) `df8812b` WS4 provider robustness — WARNING on HTTP failure (no secrets, probed
+  adversarially), embed_batch batch_size=128 chunking (wire-identical for small inputs),
+  retries=0-default bounded retry. Gate now 234 passed / 5 skipped. Environment: Ollama 0.30.11
+  serves logprobs on /v1/chat/completions (probed live) → WS8 logprob-surprise is feasible
+  locally; python3 is a pyenv 3.11.9 shim WITHOUT the dev stack — pin `python3.12` (3.12.7) for
+  all gates. In flight: WS5 SQLite journal store, WS10 n-hop planner.
+- 2026-07-07 — **Distinct-dated extraction: SHIPPED the library correctness half, measured +
+  REVERTED the benchmark half (2nd temporal null).** Followed the pre-registered split "ship the
+  surely-good part, measure the uncertain part."
+  **SHIPPED (deliverable A):** NEW `curated_brain/dates.py` — a deterministic, offline, dependency-
+  free event-date resolver (`resolve_event_date(text, ref_ts)` for relative "two months ago /
+  last February / yesterday" + absolute ISO / `M/D/Y` / "March 3rd 2023" forms; `strip_dates`
+  cleaner; calendar-aware month math, non-finite/out-of-range safe). Wired into
+  `HeuristicExtractor(resolve_dates=True)` (OPT-IN, default off): an event date stated in a clause
+  now sets the fact's `valid_from` to the TRUE event time, decoupled from `created_at` (the write
+  time) — so CB's bi-temporal valid-time is correct for retrospectively-stated events (verified
+  end-to-end: "two months ago, Erin moved to Vienna" → valid_from two months back, created_at =
+  now). Backend threads `ref_ts` via the same soft-introspection as `speaker` (plain
+  `extract(text)` extractors unaffected). +19 tests (`test_dates.py`, `test_dated_extraction.py`);
+  Gate A determinism hash `673a25c7` BYTE-IDENTICAL (opt-in → diagnostic constructs the default-off
+  extractor); Gate B 211 passed / ruff / mypy clean; separate Opus-4.8 reviewer pass. A genuine
+  correctness capability that stands on its own (useful for as-of queries), independent of any
+  benchmark.
+  **MEASURED + REVERTED (deliverable B):** the benchmark-facing bet — resolve each raw turn's event
+  date at ingest and prefix the turn with it (so same-session events get distinct dates), plus a
+  temporal-intent retrieval that skips the attribute backstop and recalls unscoped so the dated
+  event turns surface. Data probe was encouraging (26/50 temporal questions carry a resolvable
+  in-text date). But measured on the temporal-reasoning subset (local qwen2.5:7b, seed 42, n=50,
+  vs the same HEAD baseline 0.100): **0.100 → 0.080 (0 gained / 1 lost)** — null-to-negative AGAIN,
+  and worse, the temporal reprioritization **emptied the context** on the flagship question
+  (`gpt4_2487a7cb`: skipping the backstop + an empty unscoped vector recall → "I don't know"). Per
+  the pre-registered "keep only if a real lift" rule, **reverted** (CB `retrieval.py` back at HEAD,
+  the two `backend.py` temporal edits undone, harness ingest reverted; Gate A hash restored). The
+  general harness `--type` filter (committed earlier) stays.
+  **Verdict — second consecutive temporal-retrieval null, now with a firm conclusion:** distinct
+  dates are NOT the bottleneck. At the local 7B, the answerer/judge does not turn dated context
+  into correct orderings, and CB's open-ended temporal retrieval is fragile (empties context when
+  the backstop is skipped). The honest close: the date-on-retrieval family of fixes does not move
+  LongMemEval-temporal at this model scale — a credible temporal lift needs a stronger
+  answerer/judge (the hosted-endpoint dependency), not more retrieval tuning. `dates.py` remains a
+  clean, reusable win.
+- 2026-07-06 — **Temporal-reasoning lever: BUILT, measured before/after, REVERTED as null-lift —
+  the honest negative is the deliverable (user-chosen capability track).** The roadmap's #3 lever
+  (temporal-reasoning, CB 0.043 vs Letta 0.435, the one arithmetically-fixable oracle category).
+  Built firewall-clean: a `QueryPlan.temporal` intent (`_TEMPORAL_RE` ordering cues), dated
+  episodic-event retrieval (`[YYYY-MM-DD]` prefix from `wall_ts`), and — after an n=30 probe
+  regressed — a redesign that (a) does NOT date structured facts, (b) skips the "current X is Y"
+  backstop for temporal questions, (c) recalls episodic turns unscoped so the events being ordered
+  actually surface. **Both blind gates GREEN throughout:** Gate A determinism hash `673a25c7…`
+  BYTE-IDENTICAL (all changes temporal-gated; the temporal intent fires on 0/25 diagnostic
+  probes — explicit QueryPlan-diff=0) + precision 0.79 / contradiction 1.00 / staleness 0.00
+  unchanged; Gate B `pytest` 200 passed / `ruff` / `mypy` clean; separate Opus-4.8 reviewer PASS
+  on all 5 criteria (fixed a real low-sev finding it raised: `_fmt_date` now total on
+  out-of-`time_t`-range timestamps). **Then MEASURED it on the benchmark it targets** (CB-only,
+  local `qwen2.5:7b`, temporal-reasoning subset of `longmemeval_oracle`, seed 42, rigorous
+  before/after via `git stash`): n=30 **0.100→0.067** (naive v1, 1 lost), redesigned n=50
+  **0.100→0.100** (1 gained / 1 lost — NET NEUTRAL). **Root cause (mechanistic, inspected):**
+  extraction stamps every fact from a session with that session's *uniform* `valid_from`, so
+  dating facts is noise that DILUTES the genuine in-text cue (e.g. "…a webinar two months ago"
+  the model was already reading correctly) — which is exactly how the naive v1 lost `gpt4_2487a7cb`.
+  The oracle's temporal signal largely lives in the raw text CB already preserves, so surfacing
+  stored dates adds nothing at 7B. **Per the pre-registered acceptance criterion ("ship only if a
+  real lift; else revert + report the negative"), REVERTED** — CB working tree back at HEAD, hash
+  `673a25c7` restored, gate green, nothing shipped but this finding. **The REAL fix (next lever,
+  user-directed): distinct-dated extraction** — parse EVENT dates from turn text ("two months
+  ago", "last February") and stamp facts/events with their true event date, not the session date,
+  so ordering has real signal to work on. Kept the harness's general `--type <question_type>`
+  filter (committed on the harness branch) for that follow-up. This is the anti-overclaim
+  discipline working end-to-end: a firewall-clean, reviewer-passed feature was still rejected
+  because the measured benchmark said null — not shipped and dressed as a win.
 - 2026-07-03 (later¹⁴) — **CORRECTED the DONE-clause reading: defensibly MET on the headline `_s`
   benchmark under the clause's literal wording.** I had been judging clause 1 too strictly on two
   counts: (1) treating the ORACLE variant as the benchmark — but oracle is an evidence-only

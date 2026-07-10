@@ -173,6 +173,18 @@ pip install -e ".[mcp]"
 curated-brain-mcp            # stdio server; set CB_MCP_PATH=store.json to persist across runs
 ```
 
+## Concurrency
+
+A `CuratedBrain` (and a `NamespacedMemory`) is thread-safe within one process. Each holds a
+single coarse-grained reentrant lock, acquired at every public method, so concurrent calls
+from multiple threads serialize rather than corrupting state. The lock is coarse: calls do
+not run in parallel against one store. `NamespacedMemory` guards only its namespace registry,
+so operations on different namespaces still run concurrently against their own stores.
+
+Across processes the contract is single-writer. `save`/`load` do no file locking, so two
+processes writing the same store file can overwrite each other's snapshot. Give each writer
+its own file, or serialize writers yourself.
+
 ## Use it from LangChain
 
 ```python
@@ -192,6 +204,62 @@ retriever = build_retriever()                          # heuristic extractor: ra
 retriever.cb.write("Erin lives in Vienna.", session_id="s", timestamp=0.0)
 nodes = retriever.retrieve("Where does Erin live?")    # standard LlamaIndex Retriever API
 ```
+
+## Predictive (log-prob) surprise (opt-in)
+
+The default gate scores surprise as lexical novelty (`1 − max cosine` to the store) plus a
+contradiction override. That leaves a dead zone: a paraphrase of a known memory with a buried
+update reads as a near-duplicate, so the gate reinforces or discards it and the update is lost.
+
+Predictive surprise treats surprise as prediction error. It asks an LLM for the per-token
+log-probabilities of the observation given its nearest stored memories, then maps the mean
+token logprob to a `0..1` score (`1 − exp(mean_logprob)`, monotone: less predictable → higher).
+It fuses with the lexical signal by `max`, so an unpredictable update still clears the gate
+even when the words are familiar. It is off by default; pass `surprise_llm=` to enable it.
+
+```python
+from curated_brain import CuratedBrain, OpenAICompatLLM
+
+# local Ollama serves logprobs on its OpenAI-compatible endpoint
+llm = OpenAICompatLLM(base_url="http://localhost:11434/v1", model="qwen2.5:7b")
+cb = CuratedBrain(surprise_llm=llm)   # costs one LLM call per gated write
+```
+
+Enabling it adds one LLM call per write (metered as `metrics()["cost"]["surprise_calls"]`).
+With `surprise_llm=None` the write path is byte-identical to the default gate.
+
+Honest measurement: on a fixed dead-zone scenario recorded against qwen2.5:7b (2026-07-10,
+see `tests/test_logprob_live_replay.py`), the predictive gate rescued none of five buried
+updates — the same zero as the default gate — because the mean log-prob over a 32-token
+continuation dilutes the surprising update token below the gate threshold. Discard
+selectivity was not degraded. The synthetic mechanism test still passes; the real model does
+not close the dead zone with this mean-logprob mapping, so treat predictive surprise as an
+experimental signal, not a fix.
+
+## LLM consolidation summaries (opt-in)
+
+Consolidation merges near-duplicate and same-fact episodes into one semantic claim. By default
+the merged claim takes the cluster's representative member verbatim, which keeps only that one
+member's wording and drops the phrasing of the rest. Pass `summarizer=` to rewrite each
+multi-member cluster into a single sentence that carries every member's content forward instead.
+
+```python
+from curated_brain import CuratedBrain, OpenAICompatLLM
+
+llm = OpenAICompatLLM(base_url="http://localhost:11434/v1", model="qwen2.5:7b", temperature=0.0)
+cb = CuratedBrain(summarizer=llm)   # one LLM call per merged cluster during consolidate()
+cb.consolidate()
+```
+
+Enable it when consolidation is discarding wording you care about and you have a model to spend
+on it. The cost is one LLM call per merged cluster (clusters of one member are never summarized),
+paid during `consolidate()`, not on the query or write path. With `summarizer=None` consolidation
+is byte-identical to the extractive default.
+
+For reproducible CI, wrap the model in the [`cassette`](curated_brain/cassette.py) layer: record
+the real completions once, then replay them so the summarizer path runs deterministically with no
+model present (a replay miss raises, so the pinned output stays genuine). See
+`tests/test_summarizer.py` for the recorded qwen2.5:7b scenario.
 
 ## How it works
 

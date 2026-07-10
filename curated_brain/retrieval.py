@@ -11,13 +11,18 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from curated_brain.models import Fact
-from curated_brain.util import tokenize
+from curated_brain.util import _STOP, tokenize
+
+# Question tokens shorter than this are skipped by the fuzzy entity fallback: a 1-2 char token
+# is too weak a signal to trust an edit-distance match against (it would pull junk).
+_FUZZY_MIN_TOKEN_LEN = 3
 
 # Keyword -> predicate. Matched against the question's token set.
 PRED_KEYWORDS: dict[str, list[str]] = {
@@ -31,7 +36,24 @@ _RELATION_PREDS = {"manager"}
 _SESSION_RE = re.compile(r"session\s+(\d+)")
 _ASOF_RE = re.compile(r"as[-\s]of|believ|back then|at the time")
 
+# Preference-intent question tokens. A question carrying any of these asks about what an
+# entity likes/prefers, which the "preference:<topic>" fact family answers by aggregation
+# rather than by a single predicate lookup (see CuratedBrain._query). The predicate family's
+# own prefix ("preference") is included so a stored-vocab match still triggers the intent.
+PREFERENCE_KEYWORDS = frozenset(
+    "like likes liked love loves enjoy enjoys prefer prefers preferred preference "
+    "favorite favourite favor favors hate hates dislike dislikes".split())
+# The predicate prefix the extractor stamps onto every preference fact (kept in sync by
+# string, not import, to avoid a retrieval->extraction dependency).
+PREFERENCE_PREFIX = "preference:"
+
 HALF_LIFE_SECONDS = 30 * 86_400.0  # recency decays with a 30-day half-life
+
+# Fusion weights (Generative-Agents-style relevance × recency × importance). Single source
+# of truth: `fuse`'s defaults and CBConfig both read these.
+W_REL = 1.0
+W_REC = 0.5
+W_IMP = 0.3
 
 
 @dataclass
@@ -41,15 +63,25 @@ class QueryPlan:
     hops: list[str] | None
     as_of: float | None
     open_ended: bool
+    # Preference-intent: the question asks what the entity likes/prefers, answered by
+    # aggregating the "preference:<topic>" fact family for the entity rather than resolving a
+    # single predicate. Only set for a preference question naming a known entity; a default of
+    # False keeps every non-preference plan (and its rendering) byte-identical.
+    preference: bool = False
 
 
 class Planner:
     def plan(self, question: str, *, entities: set[str],
              predicates: frozenset[str] = frozenset(),
              relation_preds: frozenset[str] = frozenset(),
-             session_ts: dict[int, float]) -> QueryPlan:
+             session_ts: dict[int, float],
+             fuzzy_cutoff: float | None = None) -> QueryPlan:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
+        # Opt-in QUERY-side fuzzy fallback: only when no EXACT entity matched and a cutoff is
+        # configured. Never overrides an exact match; fails closed on any ambiguity.
+        if entity is None and fuzzy_cutoff is not None:
+            entity = self._fuzzy_entity(toks, entities, fuzzy_cutoff)
 
         # Schema-driven FIRST: a predicate ACTUALLY STORED whose non-stop content tokens all
         # appear in the question is ground truth about what the store can answer, so it
@@ -69,12 +101,28 @@ class Planner:
         attr = [p for p in preds if p not in is_rel]
         hops: list[str] | None = None
         predicate: str | None = None
-        if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
-            hops, predicate = [rel[0], attr[0]], attr[0]
-        elif rel:
-            predicate = rel[0]
-        elif attr:
-            predicate = attr[0]
+        # Arbitrary-depth possessive chains ("X's manager's manager's city"): read the ordered
+        # run of predicate tokens after the entity. A run of >= 2 relations is a genuinely
+        # deeper chain than the single-relation case below handles, so parse the order here;
+        # everything with 0 or 1 relation falls through to the exact 2-hop/single-hop logic
+        # (byte-identical output preserved). The fronted attribute ("What CITY does X's
+        # manager's manager live in") is appended when the run itself carries no attribute.
+        chain = self._possessive_chain(question, entity, preds, is_rel) if entity else []
+        rels_in_chain = [p for p in chain if p in is_rel]
+        if len(rels_in_chain) >= 2:
+            if chain[-1] not in is_rel:  # trailing attribute already in the possessive run
+                hops = chain
+            elif attr:  # attribute was fronted -> relations in order, then the attribute
+                hops = [*rels_in_chain, attr[0]]
+            if hops:
+                predicate = hops[-1]
+        if hops is None:
+            if rel and attr:  # "X's manager's city" -> traverse the relation then the attribute
+                hops, predicate = [rel[0], attr[0]], attr[0]
+            elif rel:
+                predicate = rel[0]
+            elif attr:
+                predicate = attr[0]
 
         as_of: float | None = None
         ql = question.lower()
@@ -82,8 +130,97 @@ class Planner:
         if m and _ASOF_RE.search(ql):
             as_of = session_ts.get(int(m.group(1)))
 
+        # Preference intent: a preference-keyword question naming a known entity routes to the
+        # preference:<topic> aggregation — but ONLY when preference facts are actually stored
+        # (schema-driven, like the predicate matching above). With nothing to aggregate, a
+        # keyword question keeps its exact old plan, so stores that never opted into
+        # preference extraction stay byte-identical end to end.
+        preference = (entity is not None and bool(toks & PREFERENCE_KEYWORDS)
+                      and any(p.startswith(PREFERENCE_PREFIX) for p in predicates))
+
         return QueryPlan(entity=entity, predicate=predicate, hops=hops, as_of=as_of,
-                         open_ended=entity is None or predicate is None)
+                         open_ended=entity is None or predicate is None,
+                         preference=preference)
+
+    @staticmethod
+    def _fuzzy_entity(toks: set[str], entities: set[str], cutoff: float) -> str | None:
+        """A close known-entity variant for a typo'd/diminutive question token (opt-in).
+
+        Deterministic (stdlib ``difflib``, sorted iteration). For each question token (skipping
+        short/stop-words) it finds close matches among the sorted known entities at ``cutoff``.
+        Accepts ONLY if all qualifying tokens resolve to exactly one distinct entity — any
+        ambiguity (one token matching two entities, or two tokens resolving to two different
+        entities) fails closed to None; two tokens naming the SAME entity still resolve.
+        A false match is worse than no match on the query path."""
+        known = sorted(entities)
+        resolved: set[str] = set()  # distinct entities matched, across all tokens
+        for t in sorted(toks):
+            if len(t) < _FUZZY_MIN_TOKEN_LEN or t in _STOP:
+                continue
+            close = difflib.get_close_matches(t, known, n=2, cutoff=cutoff)
+            if len(close) > 1:
+                return None  # this token is ambiguous between two entities -> fail closed
+            if close:
+                resolved.add(close[0])
+                if len(resolved) > 1:
+                    return None  # two different tokens resolved to different entities
+        return next(iter(resolved), None)
+
+    @staticmethod
+    def _possessive_chain(question: str, entity: str, preds: list[str],
+                          is_rel: AbstractSet[str]) -> list[str]:
+        """The ordered predicate run of a possessive chain following ``entity``.
+
+        The tokenizer turns "X's manager's mentor" into ``[x, s, manager, s, mentor]``; walk
+        that stream from the entity, mapping each token to the predicate it denotes (a stored
+        predicate whose name contains the token, else a keyword predicate) and stopping at the
+        first token that denotes nothing. ``preds`` is the vocabulary already matched for this
+        question, so the mapping stays schema-driven — no predicate names hardcoded here.
+        Every non-final element must be a relation for the caller to treat the run as a chain;
+        this method just reports the ordered run and lets ``plan`` decide."""
+        # token -> predicate: a chain segment names predicate p when the segment is one of p's
+        # content tokens (covers multi-word "email address") or a keyword mapped to p.
+        tok2pred: dict[str, str] = {}
+        for p in preds:
+            for t in tokenize(p, drop_stop=True):
+                tok2pred.setdefault(t, p)
+        for p in preds:
+            for kw in PRED_KEYWORDS.get(p, ()):
+                tok2pred.setdefault(kw, p)
+        toks = tokenize(question, drop_stop=False)
+        try:
+            i = toks.index(entity) + 1
+        except ValueError:
+            return []
+        chain: list[str] = []
+        while i < len(toks):
+            t = toks[i]
+            if t == "s":  # the possessive marker between links
+                i += 1
+                continue
+            pred = tok2pred.get(t)
+            if pred is None:
+                break
+            chain.append(pred)
+            # After a relation, keep walking (the next link); after an attribute the chain ends.
+            if pred not in is_rel:
+                break
+            i += 1
+        return chain
+
+
+def render_preference(fact: Fact) -> str:
+    """Compact, readable line for one open preference fact. A polarity-encoded object
+    ("like"/"dislike") reads as "<subject> likes/dislikes <topic>"; any other object is a
+    category value ("<subject>'s favorite <category> is <value>"). Topic/category is the part
+    after the "preference:" prefix."""
+    topic = fact.predicate[len(PREFERENCE_PREFIX):] if fact.predicate.startswith(
+        PREFERENCE_PREFIX) else fact.predicate
+    if fact.object == "like":
+        return f"{fact.subject} likes {topic}."
+    if fact.object == "dislike":
+        return f"{fact.subject} dislikes {topic}."
+    return f"{fact.subject}'s favorite {topic} is {fact.object}."
 
 
 def render_fact(plan: QueryPlan, fact: Fact) -> str:
@@ -106,13 +243,14 @@ class FusedItem:
     score: float
 
 
-def _recency(now: float, ts: float) -> float:
-    return 0.5 ** (max(0.0, now - ts) / HALF_LIFE_SECONDS)
+def _recency(now: float, ts: float, half_life_seconds: float = HALF_LIFE_SECONDS) -> float:
+    return 0.5 ** (max(0.0, now - ts) / half_life_seconds)
 
 
 def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
-         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
-         w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
+         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = W_REL,
+         w_rec: float = W_REC, w_imp: float = W_IMP, importance: float = 0.5,
+         half_life_seconds: float = HALF_LIFE_SECONDS) -> list[FusedItem]:
     """Rank vector candidates by relevance × recency × importance, dropping any record that
     states a superseded value (supersede-filtering, PRD §7 step 3).
 
@@ -129,7 +267,8 @@ def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
         rtoks = set(tokenize(r.text))
         if any(st <= rtoks and vt <= rtoks for st, vt in stale_pairs):
             continue
-        score = w_rel * sim + w_rec * _recency(now, r.wall_ts) + w_imp * importance
+        score = (w_rel * sim + w_rec * _recency(now, r.wall_ts, half_life_seconds)
+                 + w_imp * importance)
         items.append(FusedItem(text=r.text, rid=r.rid, provenance={"session_id": r.session_id},
                                valid_interval=(r.wall_ts, float("inf")), score=score))
     items.sort(key=lambda it: (-it.score, it.rid))

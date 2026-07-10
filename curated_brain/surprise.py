@@ -18,9 +18,60 @@ functions of the observed sequence, so the gate is fully deterministic.
 
 from __future__ import annotations
 
+import math
+from typing import Protocol
+
 STORE = "stored"
 REINFORCE = "reinforced"
 DISCARD = "discarded"
+
+
+class _LogprobLLM(Protocol):
+    """The narrow seam PredictiveSurprise needs: a completion that returns per-token
+    logprobs (``OpenAICompatLLM.complete_with_logprobs`` / any deterministic fake)."""
+
+    def complete_with_logprobs(self, prompt: str) -> tuple[str, list[float]]: ...
+
+
+class PredictiveSurprise:
+    """Predictive (log-prob) surprise estimator — PRD §6 #2, an OPT-IN second surprise signal.
+
+    Surprise is prediction error: text the model finds UNPREDICTABLE given what memory already
+    holds is surprising, even when it is lexically near-duplicate. This closes the
+    paraphrased-update dead zone — a paraphrase of a known memory carrying a buried update has
+    low cosine novelty but the update tokens are unpredictable, so this scores high where the
+    lexical gate would reinforce/discard.
+
+    ``score`` builds a deterministic prompt (a pure function of ``observation`` and
+    ``context_texts`` — no timestamps, no randomness) and asks the model for the per-token
+    logprobs of a short continuation. We map the MEAN token logprob to 0..1 via
+    ``1 - exp(mean_logprob)``. mean_logprob is the log of the geometric-mean per-token
+    probability (equivalently ``-log(perplexity)``), so ``exp(mean_logprob)`` is that mean
+    probability in (0, 1]; ``1 - it`` is monotone decreasing in predictability — a confidently
+    predicted continuation (prob→1) scores →0, an unpredictable one (prob→0) scores →1. Chosen
+    over raw perplexity because it is already bounded to 0..1, needs no squashing constant, and
+    fuses directly with lexical novelty (also 0..1) by ``max``.
+    """
+
+    def __init__(self, llm: _LogprobLLM, k_context: int = 4) -> None:
+        self.llm = llm
+        self.k_context = k_context
+
+    def prompt(self, observation: str, context_texts: list[str]) -> str:
+        """The scored prompt. Pure function of its inputs (nearest-k context, in the order
+        given) so the score is reproducible for a given LLM."""
+        ctx = " ".join(context_texts[: self.k_context])
+        return f"Given these known memories: {ctx}. Text: {observation}"
+
+    def score(self, observation: str, context_texts: list[str]) -> float:
+        _text, logprobs = self.llm.complete_with_logprobs(
+            self.prompt(observation, context_texts))
+        if not logprobs:
+            # No logprobs returned -> no predictive signal; contribute nothing (the caller
+            # fuses by max, so 0.0 leaves the lexical novelty untouched).
+            return 0.0
+        mean_lp = sum(logprobs) / len(logprobs)
+        return 1.0 - math.exp(mean_lp)
 
 
 class SurpriseGate:

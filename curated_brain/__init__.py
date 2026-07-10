@@ -13,6 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from curated_brain.backend import CuratedBrain, MemoryBackend
+from curated_brain.config import CBConfig
 from curated_brain.extraction import HeuristicExtractor, LLMExtractor, resolve_first_person
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.models import (
@@ -33,6 +34,8 @@ from curated_brain.providers import (
     SentenceTransformerEmbedder,
     TransformersLLM,
 )
+from curated_brain.store import SqliteStore
+from curated_brain.surprise import PredictiveSurprise, SurpriseGate
 
 try:
     __version__ = _pkg_version("curated-brain")
@@ -42,9 +45,13 @@ except PackageNotFoundError:  # running from a source checkout without an instal
 __all__ = [
     # core
     "CuratedBrain",
+    "CBConfig",
     "MemoryBackend",
     "NamespacedMemory",
     "Pricing",
+    "SqliteStore",
+    "SurpriseGate",
+    "PredictiveSurprise",
     "resolve_first_person",
     # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
     "Embedder",

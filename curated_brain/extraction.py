@@ -14,7 +14,9 @@ extractor runs on a real local model, on a hosted model, or — for deterministi
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
+from curated_brain.dates import resolve_event_date, strip_dates
 from curated_brain.util import normalize, tokenize
 
 # Schema-constrained, few-shot prompt (the roadmap's mitigation for weak small-model
@@ -109,6 +111,35 @@ PREDICATE_ALIASES: dict[str, str] = {"location": "city"}
 # Possessive-attribute copula: "Alice's mailing address is X", "After that, Bob's role was Y".
 # Non-greedy attribute, greedy object (which only needs to *contain* the value).
 _POSSESSIVE_RE = re.compile(r"\b([A-Z][a-zA-Z]*)'s\s+(.+?)\s+(?:is|was|are|were|will be)\s+(.+)")
+
+# --- Preferences (PRD gap: preference questions) -------------------------------------
+# Encoding: preference facts share the "preference:<topic>" predicate family and encode
+# polarity in the OBJECT as "like"/"dislike". Two ways a topic is named:
+#
+#   * bare verb form ("Erin likes jazz", "Erin hates crowds") -> topic = the object's head
+#     (last content word), predicate "preference:jazz", object "like"/"dislike". Keying the
+#     predicate on the OBJECT (not a single generic "preference") is what makes supersede
+#     correct: "likes jazz" then "hates jazz" share (erin, preference:jazz) so the polarity
+#     flips (like -> dislike); "likes hiking" is a DIFFERENT key so it stays open alongside.
+#     A generic single predicate would wrongly clobber unrelated likes; per-object keys give
+#     the intended "multiple open preferences, one polarity per object" semantics.
+#   * category form ("Erin's favorite cuisine is Thai") -> topic = the explicit category,
+#     predicate "preference:cuisine", object "Thai" (the value, verbatim). Supersede fires
+#     within the category ("favorite cuisine Thai" -> "Italian" flips) without touching other
+#     topics. This is unified with the possessive path below so "favorite cuisine" does NOT
+#     become a disjoint "favorite cuisine" predicate.
+_PREFERENCE_PREFIX = "preference:"
+_LIKE, _DISLIKE = "like", "dislike"
+# Bare preference verbs -> polarity. Third-person present tense (first-person forms are
+# rewritten to third person by resolve_first_person before parsing).
+_PREF_VERB_POLARITY: dict[str, str] = {
+    "likes": _LIKE, "loves": _LIKE, "enjoys": _LIKE, "prefers": _LIKE, "favors": _LIKE,
+    "dislikes": _DISLIKE, "hates": _DISLIKE,
+}
+_PREF_VERB_RE = re.compile(
+    r"\b([A-Z][a-zA-Z]*)\s+(" + "|".join(sorted(_PREF_VERB_POLARITY)) + r")\s+(.+)")
+# "favorite"/"favourite" marker that introduces a category attribute ("favorite cuisine").
+_FAVORITE_MARKERS = frozenset("favorite favourite".split())
 # Verb/copula forms mapped to a canonical predicate: (regex over a clause, predicate).
 _VERB_PATTERNS: list[tuple[re.Pattern, str]] = [
     # optional auxiliary ("has moved", "had relocated") — common perfect-tense phrasing
@@ -137,8 +168,10 @@ _FIRST_PERSON_SUBS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:I\s+am|I'm)\b"), "{s} is"),
     (re.compile(r"\bI've\b"), "{s} has"),
     # present-tense agreement: "I work at" -> "<Name> works at" (past tense unaffected —
-    # "moved" does not match \bmove\b)
-    (re.compile(r"\bI\s+(work|live|reside|report|move|relocate)\b"), r"{s} \1s"),
+    # "moved" does not match \bmove\b). Preference verbs join the same subject-verb-agreement
+    # rewrite so "I love hiking" -> "<Name> loves hiking" parses as a bare preference.
+    (re.compile(r"\bI\s+(work|live|reside|report|move|relocate|"
+                r"like|love|enjoy|prefer|favor|dislike|hate)\b"), r"{s} \1s"),
     (re.compile(r"\bI\b"), "{s}"),
     (re.compile(r"\b[Mm]y\b"), "{s}'s"),
 ]
@@ -156,6 +189,20 @@ def resolve_first_person(text: str, speaker: str) -> str:
 # resolved to the most-recent named subject — recency-based coreference.
 _PRONOUN_SUBJ_RE = re.compile(r"^\s*(?:[A-Za-z][^,]*,\s+)?(their|his|her|its)\s+", re.I)
 
+# A leading definite noun phrase in subject position: "The manager ...", "The manager's ...".
+# The single captured word is the head noun; it is resolved (via a role lookup the backend
+# supplies) to the unique entity holding that role, then substituted back so the existing
+# named-subject patterns parse the clause. Only ONE noun word is allowed (so "The manager
+# position is open" is not treated as the subject "manager position").
+_DEFINITE_SUBJ_RE = re.compile(r"^\s*[Tt]he\s+([a-z]+)('s\b|\s)")
+
+# Verb heads that can open a subjectless (ellipsis) clause — the intransitive/copular forms
+# whose named-subject counterparts already exist in _VERB_PATTERNS. A subjectless clause
+# starting with one of these reuses the most-recent named subject.
+_ELLIPSIS_VERB_RE = re.compile(
+    r"^\s*(?:moved|relocated|lives|resides|reports|works|was\s+promoted|has\s+"
+    r"(?:moved|relocated))\b", re.I)
+
 
 def _canon_predicate(attr: str) -> str:
     """Canonical predicate key: content tokens minus temporal markers, space-joined, then
@@ -167,6 +214,30 @@ def _canon_predicate(attr: str) -> str:
 def _clean_object(value: str) -> str:
     """Trim surrounding whitespace and trailing sentence punctuation from an object value."""
     return value.strip().rstrip(".!?,;: ").strip()
+
+
+def _favorite_category(attr: str) -> str | None:
+    """If a possessive attribute names a favorite ("favorite cuisine", "favourite music"),
+    return the category ("cuisine") for the ``preference:<category>`` predicate, else None.
+    The category is the attribute's content tokens minus the favorite marker, space-joined —
+    so "favorite ice cream" -> "ice cream"; a bare "favorite" (no category) yields None."""
+    toks = tokenize(attr, drop_stop=True)
+    if not toks or toks[0] not in _FAVORITE_MARKERS:
+        return None
+    category = " ".join(toks[1:])
+    return category or None
+
+
+def _preference_topic(obj: str) -> str | None:
+    """Topic key for a bare preference ("Erin likes jazz" -> "jazz") — the object's last
+    content token (its head noun), so "likes classic jazz" and "prefers classic jazz" share a
+    topic. None when the object has no content token, and None for a comparative object
+    ("prefers window seats TO aisle seats"): head-noun keying would collapse both alternatives
+    into one topic, so a genuine reversal later would silently no-op — fail closed instead."""
+    if re.search(r"\bto\b|\bover\b|\brather than\b", obj):
+        return None
+    toks = tokenize(obj, drop_stop=True)
+    return toks[-1] if toks else None
 
 
 # Capitalized function words the name patterns would otherwise mistake for a subject
@@ -196,10 +267,38 @@ class HeuristicExtractor:
     is resolved to the most-recent named subject seen across calls (recency-based
     coreference), so contradiction updates phrased with a pronoun still supersede. State is
     cleared by :meth:`reset` (the consuming ``CuratedBrain.reset`` calls it).
+
+    **Definite-NP / ellipsis coreference (opt-in):** with ``resolve_definite_np=True`` two
+    further references are resolved. A definite noun phrase in subject position ("The manager
+    moved to Vienna") is resolved via a ``resolve_role`` callback the backend supplies to the
+    unique entity holding that role (in this vocab, an open ``(person, role, <noun>)`` fact) —
+    fail-closed: zero OR more than one candidate means no resolution. An ellipsis subject (a
+    subjectless clause, "Moved to Vienna.") reuses the most-recent named subject only when the
+    clause matches an existing verb form. Default OFF keeps behavior byte-identical.
+
+    Known limitation (multi-speaker streams): the ellipsis antecedent is the last NAMED
+    subject across all writes regardless of who is speaking — in an interleaved multi-speaker
+    stream a subjectless clause can bind to a prior speaker's subject. Same recency semantics
+    as the pronoun path; keep the feature off (or one extractor per speaker) in that setting.
     """
 
-    def __init__(self, *, max_facts: int = 8) -> None:
+    def __init__(self, *, max_facts: int = 8, resolve_dates: bool = False,
+                 resolve_definite_np: bool = False,
+                 extract_preferences: bool = False) -> None:
         self.max_facts = max_facts
+        # OFF by default: preference verbs ("likes", "prefers") are common enough in free
+        # text that always-on extraction measurably shifts retrieval on mixed streams (the
+        # held-out diagnostic gate rejected the always-on form — precision/contradiction
+        # regressed). Opt in when preference questions are part of the workload.
+        self.extract_preferences = extract_preferences
+        # OFF by default so existing behavior (and the byte-identical diagnostic gate) is
+        # unchanged. When on, an event date stated in a clause ("...two months ago",
+        # "on 2023-03-15") sets the fact's valid_from to the TRUE event time instead of the
+        # write time, so bi-temporal valid-time is correct for retrospectively-stated events.
+        self.resolve_dates = resolve_dates
+        # OFF by default (byte-identical behavior; the Gate A hash is untouched). When on,
+        # definite-NP subjects and ellipsis subjects are resolved (see class docstring).
+        self.resolve_definite_np = resolve_definite_np
         self._last_subject: str | None = None
 
     def reset(self) -> None:
@@ -220,13 +319,53 @@ class HeuristicExtractor:
             return clause
         return f"{clause[:m.start(1)]}{self._last_subject}'s {clause[m.end(1):].lstrip()}"
 
-    def extract(self, text: str, *, speaker: str | None = None) -> list[dict]:
+    def _resolve_definite_np(self, clause: str,
+                             resolve_role: Callable[[str], str | None]) -> str:
+        """Replace a leading definite-NP subject ("The manager X") with the unique entity
+        holding that role, so the clause parses to a named fact. ``resolve_role`` returns the
+        sole role-holder or ``None`` (zero or ambiguous — fail-closed); an unresolved noun is
+        left as-is, so "The manager position is open" and generic "The city ..." don't fire."""
+        m = _DEFINITE_SUBJ_RE.match(clause)
+        if not m:
+            return clause
+        name = resolve_role(m.group(1))
+        if name is None:
+            return clause
+        # Rebuild with the resolved name in place of "The <noun>", keeping any "'s" so a
+        # possessive clause ("The manager's project is X") stays a possessive.
+        return f"{name}{m.group(2)}{clause[m.end(2):]}"
+
+    def _resolve_ellipsis(self, clause: str) -> str:
+        """Prepend the most-recent named subject to a subjectless verb clause ("Moved to
+        Vienna." -> "Erin moved to Vienna."), so the named-subject patterns parse it. Only
+        fires on the intransitive/copular verb heads that already have a named form."""
+        if self._last_subject is None or not _ELLIPSIS_VERB_RE.match(clause):
+            return clause
+        verb = clause.lstrip()
+        # lowercase the (sentence-initial, capitalized) verb so the case-sensitive named-verb
+        # patterns match ("Works at X" -> "Erin works at X").
+        verb = verb[:1].lower() + verb[1:]
+        return f"{self._last_subject} {verb}"
+
+    def extract(self, text: str, *, speaker: str | None = None,
+                ref_ts: float | None = None,
+                resolve_role: Callable[[str], str | None] | None = None) -> list[dict]:
+        """``ref_ts`` (the observation's wall clock) is used only when ``resolve_dates`` is
+        set: a date stated in a clause resolves against it to the fact's ``valid_from``.
+
+        ``resolve_role`` (a backend-supplied "role noun -> sole holder or None" lookup) is
+        used only when ``resolve_definite_np`` is set, to resolve definite-NP subjects."""
         if speaker:
             text = resolve_first_person(text, speaker)
         facts: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
         for clause in _CLAUSE_SPLIT_RE.split(text):
-            fact = self._parse_clause(self._resolve_pronoun(clause))
+            resolved = self._resolve_pronoun(clause)
+            if self.resolve_definite_np and resolved is clause and resolve_role is not None:
+                resolved = self._resolve_definite_np(clause, resolve_role)
+            if self.resolve_definite_np and resolved is clause:
+                resolved = self._resolve_ellipsis(clause)
+            fact = self._parse_clause(resolved)
             if fact is None:
                 continue
             self._last_subject = fact["subject"]  # track most-recent named subject
@@ -235,6 +374,17 @@ class HeuristicExtractor:
             if key in seen:
                 continue
             seen.add(key)
+            if self.resolve_dates and ref_ts is not None:
+                # date is read from the SAME clause the fact came from, so it attaches to the
+                # right fact; no date found -> valid_from omitted -> falls back to write time.
+                vf = resolve_event_date(resolved, ref_ts)
+                if vf is not None:
+                    fact["valid_from"] = vf
+                    # a trailing date phrase the greedy object swallowed ("Vienna two months
+                    # ago") is lifted into valid_from, so strip it back out of the value.
+                    cleaned = strip_dates(fact["object"])
+                    if cleaned:
+                        fact["object"] = cleaned
             facts.append(fact)
             if len(facts) >= self.max_facts:
                 break
@@ -244,9 +394,24 @@ class HeuristicExtractor:
         """First matching pattern wins; possessive form (most specific) is tried first."""
         m = _POSSESSIVE_RE.search(clause)
         if m and m.group(1).lower() not in _BAD_SUBJECTS:
-            subject, predicate, obj = m.group(1), _canon_predicate(m.group(2)), m.group(3)
-            if predicate and _clean_object(obj):
-                return {"subject": subject, "predicate": predicate, "object": _clean_object(obj)}
+            subject, attr, obj = m.group(1), m.group(2), _clean_object(m.group(3))
+            # "X's favorite <category> is <value>" -> preference:<category> = <value>, unified
+            # with the bare-verb preference family (not a disjoint "favorite <category>" pred).
+            category = _favorite_category(attr) if self.extract_preferences else None
+            if category and obj:
+                return {"subject": subject, "predicate": _PREFERENCE_PREFIX + category,
+                        "object": obj}
+            predicate = _canon_predicate(attr)
+            if predicate and obj:
+                return {"subject": subject, "predicate": predicate, "object": obj}
+        # Bare preference verb ("Erin likes jazz", "Erin hates crowds"): predicate keyed on the
+        # object's head noun so polarity supersedes per object; object encodes the polarity.
+        m = _PREF_VERB_RE.search(clause) if self.extract_preferences else None
+        if m and m.group(1).lower() not in _BAD_SUBJECTS:
+            topic = _preference_topic(_clean_object(m.group(3)))
+            if topic:
+                return {"subject": m.group(1), "predicate": _PREFERENCE_PREFIX + topic,
+                        "object": _PREF_VERB_POLARITY[m.group(2)]}
         for pat, predicate in _VERB_PATTERNS:
             m = pat.search(clause)
             if m and m.group(1).lower() not in _BAD_SUBJECTS:

@@ -4,12 +4,15 @@ when `llama-index-core` is installed."""
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
 from curated_brain.backend import CuratedBrain
 from curated_brain.extraction import HeuristicExtractor
+
+# Skip the whole module cleanly when the extra is absent. NOTE: find_spec("llama_index.core")
+# RAISES ModuleNotFoundError when the parent `llama_index` is missing (it is a submodule), so
+# it can't guard collection — importorskip catches the import failure and skips instead.
+pytest.importorskip("llama_index.core", reason="llama-index extra not installed")
 
 
 def _brain() -> CuratedBrain:
@@ -18,8 +21,6 @@ def _brain() -> CuratedBrain:
     return cb
 
 
-@pytest.mark.skipif(importlib.util.find_spec("llama_index.core") is None,
-                    reason="llama-index extra not installed")
 def test_retriever_returns_scored_nodes_with_provenance():
     from curated_brain.llama_index import build_retriever
     retriever = build_retriever(_brain(), k=4)
@@ -31,8 +32,6 @@ def test_retriever_returns_scored_nodes_with_provenance():
     assert "Berlin" in retriever.retrieve("Where does Bob live?")[0].text
 
 
-@pytest.mark.skipif(importlib.util.find_spec("llama_index.core") is None,
-                    reason="llama-index extra not installed")
 def test_missing_query_returns_no_nodes():
     from curated_brain.llama_index import build_retriever
     retriever = build_retriever(k=4)  # empty brain

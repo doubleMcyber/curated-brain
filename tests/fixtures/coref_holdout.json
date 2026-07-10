@@ -1,0 +1,247 @@
+{
+  "_about": "FROZEN held-out coreference fixture. Authored BEFORE any definite-NP/ellipsis implementation and NEVER adjusted to flatter the implementation. Each case: setup observations establish stored facts; `text` is the observation carrying a definite-NP or ellipsis reference; `expect` is the ONE fact that must be extracted with the RESOLVED subject, or \"none\" when no coreference must fire (fail-closed / adversarial). Roles are stored as (person, role, X) where X names the role, so \"the manager\" resolves to the unique person whose open fact is (?, role, manager). Uniqueness is required: two open managers = ambiguous = no fire.",
+  "target_resolved": 0.8,
+  "target_false_positives": 0,
+  "cases": [
+    {
+      "id": "role-manager-relocate",
+      "setup": ["Erin works as a manager."],
+      "text": "The manager relocated to Vienna.",
+      "expect": {"subject": "Erin", "predicate": "city", "object": "Vienna"}
+    },
+    {
+      "id": "role-engineer-moved",
+      "setup": ["Frank works as an engineer."],
+      "text": "The engineer moved to Berlin.",
+      "expect": {"subject": "Frank", "predicate": "city", "object": "Berlin"}
+    },
+    {
+      "id": "role-designer-lives",
+      "setup": ["Dana works as a designer."],
+      "text": "The designer lives in Oslo.",
+      "expect": {"subject": "Dana", "predicate": "city", "object": "Oslo"}
+    },
+    {
+      "id": "role-analyst-reports",
+      "setup": ["Priya works as an analyst."],
+      "text": "The analyst reports to Frank.",
+      "expect": {"subject": "Priya", "predicate": "manager", "object": "Frank"}
+    },
+    {
+      "id": "role-researcher-project",
+      "setup": ["Quinn works as a researcher."],
+      "text": "The researcher works on project Apollo.",
+      "expect": {"subject": "Quinn", "predicate": "project", "object": "Apollo"}
+    },
+    {
+      "id": "role-writer-employer",
+      "setup": ["Cara works as a writer."],
+      "text": "The writer works at Umbrella.",
+      "expect": {"subject": "Cara", "predicate": "employer", "object": "Umbrella"}
+    },
+    {
+      "id": "role-manager-based",
+      "setup": ["Bob works as a manager."],
+      "text": "The manager is based in Cairo.",
+      "expect": {"subject": "Bob", "predicate": "city", "object": "Cairo"}
+    },
+    {
+      "id": "role-manager-resides",
+      "setup": ["Grace works as a manager."],
+      "text": "The manager resides in Lisbon.",
+      "expect": {"subject": "Grace", "predicate": "city", "object": "Lisbon"}
+    },
+    {
+      "id": "role-engineer-relocated-aux",
+      "setup": ["Ivan works as an engineer."],
+      "text": "The engineer has relocated to Prague.",
+      "expect": {"subject": "Ivan", "predicate": "city", "object": "Prague"}
+    },
+    {
+      "id": "role-promoted-to",
+      "setup": ["Nadia works as an analyst."],
+      "text": "The analyst was promoted to senior manager.",
+      "expect": {"subject": "Nadia", "predicate": "role", "object": "senior manager"}
+    },
+    {
+      "id": "role-manager-two-entities-first-superseded",
+      "setup": ["Erin works as a manager.", "Erin moved to Paris."],
+      "text": "The manager moved to Madrid.",
+      "expect": {"subject": "Erin", "predicate": "city", "object": "Madrid"}
+    },
+    {
+      "id": "role-designer-possessive",
+      "setup": ["Owen works as a designer."],
+      "text": "The designer's email is owen@example.com.",
+      "expect": {"subject": "Owen", "predicate": "email", "object": "owen@example.com"}
+    },
+    {
+      "id": "role-manager-possessive-project",
+      "setup": ["Rita works as a manager."],
+      "text": "The manager's project is Helios.",
+      "expect": {"subject": "Rita", "predicate": "project", "object": "Helios"}
+    },
+    {
+      "id": "role-analyst-after-city-established",
+      "setup": ["Sam works as an analyst.", "Sam moved to Berlin."],
+      "text": "The analyst moved to Vienna.",
+      "expect": {"subject": "Sam", "predicate": "city", "object": "Vienna"}
+    },
+    {
+      "id": "role-researcher-lives-in",
+      "setup": ["Tara works as a researcher."],
+      "text": "The researcher lives in Tokyo.",
+      "expect": {"subject": "Tara", "predicate": "city", "object": "Tokyo"}
+    },
+    {
+      "id": "role-engineer-works-as-new-role",
+      "setup": ["Uma works as an engineer."],
+      "text": "The engineer works as an architect.",
+      "expect": {"subject": "Uma", "predicate": "role", "object": "architect"}
+    },
+    {
+      "id": "role-writer-moved-capitalized-the",
+      "setup": ["Vera works as a writer."],
+      "text": "The writer moved to Helsinki.",
+      "expect": {"subject": "Vera", "predicate": "city", "object": "Helsinki"}
+    },
+    {
+      "id": "role-manager-headquartered-skip",
+      "setup": ["Wade works as a manager."],
+      "text": "The manager relocated to Rome.",
+      "expect": {"subject": "Wade", "predicate": "city", "object": "Rome"}
+    },
+    {
+      "id": "ellipsis-moved-after-named",
+      "setup": [],
+      "text": "Erin moved to Berlin. Moved to Vienna.",
+      "expect": {"subject": "Erin", "predicate": "city", "object": "Vienna"}
+    },
+    {
+      "id": "ellipsis-lives-after-named",
+      "setup": [],
+      "text": "Frank moved to Oslo. Lives in Prague.",
+      "expect": {"subject": "Frank", "predicate": "city", "object": "Prague"}
+    },
+    {
+      "id": "ellipsis-relocated-after-named",
+      "setup": [],
+      "text": "Dana moved to Rome. Relocated to Madrid.",
+      "expect": {"subject": "Dana", "predicate": "city", "object": "Madrid"}
+    },
+    {
+      "id": "ellipsis-works-at-after-named",
+      "setup": [],
+      "text": "Cara moved to Cairo. Works at Umbrella.",
+      "expect": {"subject": "Cara", "predicate": "employer", "object": "Umbrella"}
+    },
+    {
+      "id": "ellipsis-reports-to-after-named",
+      "setup": [],
+      "text": "Priya moved to Lisbon. Reports to Frank.",
+      "expect": {"subject": "Priya", "predicate": "manager", "object": "Frank"}
+    },
+    {
+      "id": "ellipsis-resides-after-named",
+      "setup": [],
+      "text": "Quinn moved to Tokyo. Resides in Kyoto.",
+      "expect": {"subject": "Quinn", "predicate": "city", "object": "Kyoto"}
+    },
+    {
+      "id": "ellipsis-promoted-after-named",
+      "setup": [],
+      "text": "Bob moved to Vienna. Was promoted to director.",
+      "expect": {"subject": "Bob", "predicate": "role", "object": "director"}
+    },
+    {
+      "id": "ellipsis-role-established-from-setup",
+      "setup": ["Grace works as a manager."],
+      "text": "Grace moved to Berlin. Relocated to Vienna.",
+      "expect": {"subject": "Grace", "predicate": "city", "object": "Vienna"}
+    },
+    {
+      "id": "role-designer-based-in",
+      "setup": ["Zoe works as a designer."],
+      "text": "The designer is based in Munich.",
+      "expect": {"subject": "Zoe", "predicate": "city", "object": "Munich"}
+    },
+    {
+      "id": "adversarial-two-managers-ambiguous",
+      "setup": ["Erin works as a manager.", "Frank works as a manager."],
+      "text": "The manager moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-two-engineers-ambiguous",
+      "setup": ["Dana works as an engineer.", "Cara works as an engineer."],
+      "text": "The engineer lives in Berlin.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-manager-position-open",
+      "setup": ["Erin works as a manager."],
+      "text": "The manager position is open.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-no-matching-role",
+      "setup": ["Erin works as a manager."],
+      "text": "The engineer moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-no-entities-at-all",
+      "setup": [],
+      "text": "The manager moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-generic-city-is-nice",
+      "setup": ["Erin works as a manager."],
+      "text": "The city is nice this time of year.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-generic-the-project-is-late",
+      "setup": ["Quinn works as a researcher."],
+      "text": "The project is running late.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-ellipsis-no-prior-subject",
+      "setup": [],
+      "text": "Moved to Vienna last spring.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-ellipsis-non-verb-clause",
+      "setup": [],
+      "text": "Erin moved to Berlin. The weather was pleasant.",
+      "expect": {"subject": "Erin", "predicate": "city", "object": "Berlin"}
+    },
+    {
+      "id": "adversarial-the-role-noun-not-stored",
+      "setup": ["Erin works as a manager."],
+      "text": "The pilot moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-manager-superseded-away",
+      "setup": ["Erin works as a manager.", "Erin works as a director."],
+      "text": "The manager moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-two-managers-one-moved-still-ambiguous",
+      "setup": ["Erin works as a manager.", "Bob works as a manager.", "Erin moved to Berlin."],
+      "text": "The manager moved to Vienna.",
+      "expect": "none"
+    },
+    {
+      "id": "adversarial-the-office-generic-noun",
+      "setup": ["Erin works as a manager."],
+      "text": "The office moved to a new building.",
+      "expect": "none"
+    }
+  ]
+}

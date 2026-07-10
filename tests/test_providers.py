@@ -13,6 +13,7 @@ Two test classes of coverage:
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import sys
 
@@ -29,6 +30,7 @@ from curated_brain.providers import (
     SentenceTransformerEmbedder,
     TransformersLLM,
 )
+from curated_brain.surprise import PredictiveSurprise
 
 LIVE = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("sentence_transformers")
 LIVE_LLM = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("transformers")
@@ -95,6 +97,72 @@ def test_openai_compat_llm_offline():
     assert seen["body"]["temperature"] == 0.0  # greedy by default, for reproducibility
 
 
+def test_openai_compat_llm_logprobs_wire_format_and_parsing():
+    # POST carries `"logprobs": true`; we read choices[0].logprobs.content[*].logprob in order.
+    seen = {}
+
+    def fake_post(path, body):
+        seen.update(path=path, body=body)
+        return {"choices": [{
+            "message": {"content": " lives in Vienna"},
+            "logprobs": {"content": [{"token": " lives", "logprob": -0.1},
+                                     {"token": " in", "logprob": -0.2},
+                                     {"token": " Vienna", "logprob": -0.3}]}}]}
+
+    llm = OpenAICompatLLM("qwen2.5:7b", post=fake_post)
+    text, lps = llm.complete_with_logprobs("Given ... Text: Erin lives in Vienna")
+    assert seen["path"] == "/chat/completions"
+    assert seen["body"]["logprobs"] is True
+    assert text == " lives in Vienna"  # NOT stripped: stays aligned with the token list
+    assert lps == [-0.1, -0.2, -0.3]
+
+
+def test_openai_compat_llm_logprobs_absent_is_empty_list():
+    # A model that returns no logprobs block must yield [] (the estimator treats that as
+    # "no predictive signal"), never crash on a missing key.
+    def fake_post(path, body):
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    _text, lps = OpenAICompatLLM("m", post=fake_post).complete_with_logprobs("q")
+    assert lps == []
+
+
+class _CannedLogprobLLM:
+    """Deterministic logprob LLM: returns a fixed per-token logprob list regardless of prompt.
+    Higher logprobs (closer to 0) = more predictable = lower surprise."""
+
+    def __init__(self, logprobs):
+        self._lps = list(logprobs)
+
+    def complete_with_logprobs(self, prompt):
+        return "", list(self._lps)
+
+
+def test_predictive_surprise_is_monotone_in_predictability():
+    # Confidently predicted continuation (logprobs near 0) -> low surprise; an unpredictable
+    # one (very negative logprobs) -> high surprise. Both in 0..1.
+    predictable = PredictiveSurprise(_CannedLogprobLLM([-0.01, -0.02, -0.01]))
+    surprising = PredictiveSurprise(_CannedLogprobLLM([-4.0, -5.0, -6.0]))
+    lo = predictable.score("obs", ["ctx"])
+    hi = surprising.score("obs", ["ctx"])
+    assert 0.0 <= lo < hi <= 1.0
+    assert lo < 0.05 and hi > 0.9
+
+
+def test_predictive_surprise_empty_logprobs_is_zero():
+    # No logprobs -> no signal -> 0.0 (fuses as a no-op via max with lexical novelty).
+    assert PredictiveSurprise(_CannedLogprobLLM([])).score("obs", ["ctx"]) == 0.0
+
+
+def test_predictive_surprise_prompt_is_pure_function():
+    # The scored prompt is a deterministic function of (observation, nearest-k context) —
+    # no timestamps, no randomness — so the score is reproducible.
+    ps = PredictiveSurprise(_CannedLogprobLLM([-1.0]), k_context=2)
+    p1 = ps.prompt("Erin moved", ["a", "b", "c"])
+    p2 = ps.prompt("Erin moved", ["a", "b", "c"])
+    assert p1 == p2 == "Given these known memories: a b. Text: Erin moved"  # k_context truncates
+
+
 def test_openai_compat_embedder_drives_the_pipeline():
     # The remote embedder drops into CuratedBrain like any other Embedder (here via a
     # deterministic fake transport, so it stays offline + reproducible).
@@ -106,6 +174,124 @@ def test_openai_compat_embedder_drives_the_pipeline():
     cb.write("Erin lives in Vienna.", session_id="s0", timestamp=0.0,
              metadata={"fact": {"subject": "Erin", "predicate": "city", "object": "Vienna"}})
     assert cb.answer_structured("Erin", "city") == "Vienna"
+
+
+# ------------------------------------------- offline: batch chunking / retries / logs ---
+def _make_batch_transport(dim=2):
+    # Records each request; echoes back one embedding per input, index-aligned. Returned in
+    # reverse order so the provider's index-sort is exercised (order must still be preserved).
+    calls = []
+
+    def fake_post(path, body):
+        inputs = body["input"]
+        calls.append((path, list(inputs)))
+        data = [{"index": i, "embedding": [float(1 + i), 0.0]} for i in range(len(inputs))]
+        return {"data": list(reversed(data))}
+
+    return calls, fake_post
+
+
+@pytest.mark.parametrize("n", [0, 1, 4, 5, 11])  # 0, 1, batch_size, batch_size+1, 2*bs+3
+def test_openai_compat_embedder_chunk_boundaries(n):
+    bs = 4
+    calls, fake_post = _make_batch_transport()
+    emb = OpenAICompatEmbedder("m", dim=2, batch_size=bs, post=fake_post)
+    texts = [f"t{i}" for i in range(n)]
+    out = emb.embed_batch(texts)
+
+    assert out.shape == (n, 2)
+    # one request per chunk of at most batch_size (none for the empty input)
+    expected_reqs = (n + bs - 1) // bs
+    assert len(calls) == expected_reqs
+    # each request carries a consecutive, order-preserving slice of the inputs, wire format
+    # identical to a plain single-batch request ({"model", "input": [...]})
+    seen: list[str] = []
+    for path, inputs in calls:
+        assert path == "/embeddings"
+        seen.extend(inputs)
+    assert seen == texts  # concatenated in input order, nothing dropped/reordered
+    # order-preserving concatenation of results: row i is the unit vector for input i's chunk
+    for start in range(0, n, bs):
+        chunk = texts[start:start + bs]
+        for j in range(len(chunk)):
+            assert np.allclose(out[start + j], [1.0, 0.0])
+
+
+def test_openai_compat_embedder_le_batch_size_is_single_request():
+    # <= batch_size must be byte-identical to today: exactly one request, same wire format.
+    calls = []
+
+    def fake_post(path, body):
+        calls.append((path, body))
+        return {"data": [{"index": i, "embedding": [1.0, 0.0]} for i in range(len(body["input"]))]}
+
+    emb = OpenAICompatEmbedder("m", dim=2, batch_size=128, post=fake_post)
+    emb.embed_batch(["a", "b", "c"])
+    assert calls == [("/embeddings", {"model": "m", "input": ["a", "b", "c"]})]
+
+
+class _Boom(RuntimeError):
+    pass
+
+
+def test_openai_compat_failure_logs_warning_without_secrets(caplog):
+    def failing_post(path, body):
+        raise _Boom("network down")
+
+    emb = OpenAICompatEmbedder("m", dim=2, base_url="https://host/v1",
+                               api_key="sk-SECRET-123", post=failing_post)
+    with caplog.at_level(logging.WARNING, logger="curated_brain.providers"):
+        with pytest.raises(_Boom):  # exception still propagates (not swallowed)
+            emb.embed_batch(["top secret input text"])
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warns, "expected a WARNING on HTTP failure"
+    joined = " ".join(r.getMessage() for r in warns)
+    assert "https://host/v1" in joined and "_Boom" in joined  # url + exception class logged
+    # never the api key, headers, or input text
+    blob = " ".join(r.getMessage() for r in caplog.records)
+    assert "sk-SECRET-123" not in blob
+    assert "top secret input text" not in blob
+
+
+def test_openai_compat_retries_succeed_after_transient_failures():
+    calls = {"n": 0}
+
+    def flaky_post(path, body):
+        calls["n"] += 1
+        if calls["n"] <= 2:  # fail twice, then succeed
+            raise _Boom("transient")
+        return {"data": [{"index": 0, "embedding": [1.0, 0.0]}]}
+
+    emb = OpenAICompatEmbedder("m", dim=2, retries=2, post=flaky_post)
+    out = emb.embed("x")
+    assert np.allclose(out, [1.0, 0.0])
+    assert calls["n"] == 3  # 2 failures + 1 success = retries+1 attempts used
+
+
+def test_openai_compat_retries_zero_raises_on_first():
+    calls = {"n": 0}
+
+    def failing_post(path, body):
+        calls["n"] += 1
+        raise _Boom("down")
+
+    emb = OpenAICompatEmbedder("m", dim=2, retries=0, post=failing_post)
+    with pytest.raises(_Boom):
+        emb.embed("x")
+    assert calls["n"] == 1  # default = exactly one attempt
+
+
+def test_openai_compat_retries_exhaust_and_raise():
+    calls = {"n": 0}
+
+    def failing_post(path, body):
+        calls["n"] += 1
+        raise _Boom("down")
+
+    llm = OpenAICompatLLM("m", retries=1, post=failing_post)
+    with pytest.raises(_Boom):
+        llm.complete("q")
+    assert calls["n"] == 2  # retries=1 -> two attempts then re-raise the last error
 
 
 # -------------------------------------------------------------- offline: cassette ----
