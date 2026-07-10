@@ -4,14 +4,18 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-09 (Tier-1 production hardening SHIPPED on `claude/improvements-tier1-3`,
-4 reviewer-passed commits, Gate A hash 673a25c7 byte-identical throughout: WS1 frozen `CBConfig`
-exposing the tuning constants (dead-knob + SSOT reviewer findings fixed); WS2 in-repo
-determinism-hash anchor test + CI coverage + weekly CB_SLOW lane; WS3 RLock thread-safety on
-CuratedBrain/NamespacedMemory (README concurrency contract); WS4 provider HTTP-failure logging +
-embed_batch chunking + opt-in retries. Session plan: Tiers 1-3 of
-`~/.claude/plans/go-through-the-entire-structured-sparrow.md` (13 workstreams; compute-heavy runs
-need explicit user go-ahead). Prior line below.)
+Last updated: 2026-07-09 (**Tiers 1-3 improvement campaign COMPLETE: 12 of 13 workstreams
+SHIPPED on `claude/improvements-tier1-3`** — 12 reviewer-passed commits, gate 290 passed / 5
+skipped, ruff+mypy clean, Gate A hash 673a25c7 byte-identical at every commit. Landed: CBConfig,
+determinism-hash anchor + CI lanes, RLock, provider hardening, SQLite journal store, HNSW-survives-
+restore + ANN sidecar, MCP namespaces, logprob predictive surprise (PRD §6 #2 implemented, opt-in),
+n-hop planner chains, fuzzy entity fallback (opt-in), definite-NP/ellipsis coreference (opt-in,
+frozen-holdout-gated 28/28), preference path (opt-in after Gate A REJECTED the always-on form —
+firewall worked: hash 07760396 + precision 0.79→0.74 regression caught and reverted to opt-in,
+Gate A restored). REMAINING, all needing user go-ahead (compute-heavy, qwen2.5:7b via Ollama):
+WS9 summarizer cassette (~5-15 min), WS8 live logprob cassette (~20-60 min), WS13 frozen
+preference-subset re-run (~1.5-2 h). Session plan:
+`~/.claude/plans/go-through-the-entire-structured-sparrow.md`. Prior line below.)
 Prior: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
 the benchmark half. NEW `curated_brain/dates.py` deterministic offline event-date resolver +
 opt-in `HeuristicExtractor(resolve_dates=True)` → facts get their TRUE valid_from ("moved two
@@ -583,6 +587,31 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-09 (later) — **Tiers 2-3 complete: 8 more reviewer-passed commits.** `eaa42cf` WS5
+  SQLite journal store (reviewer caught 2 real bugs pre-commit: non-atomic compact under
+  autocommit — a torn compact LOST the snapshot, fixed with explicit BEGIN IMMEDIATE + verified
+  surviving a hard kill mid-transaction; thread-bound connection — fixed check_same_thread=False).
+  `dfeddd5` WS10 n-hop possessive chains (122/122 existing plans byte-identical vs base planner;
+  superseded intermediate hops respect bi-temporal current()). `44b58bb` WS11 opt-in query-side
+  fuzzy entity fallback (54/54 dataset plans identical with knob ON). `0a2d868` WS6 HNSW survives
+  restore + opt-in ANN sidecar (stale/corrupt sidecar → WARN + rebuild, never silent). `1abe682`
+  WS12 opt-in definite-NP/ellipsis coreference — the anti-tuning protocol held: 40-case holdout
+  fixture sha-frozen BEFORE implementation, 6 disclosed post-freeze text edits independently
+  adjudicated as genuine authoring errors (base-extractor trailing-adverb artifact reproduced from
+  git-archive base), 28/28 resolved / 0 false positives, both re-scored independently by the
+  reviewer; multi-speaker ellipsis limitation documented. `ed2a0c4` WS7 MCP namespace arg on every
+  tool + drop tool (store_path mode stays single-namespace and fails loud — honest limit).
+  `a411ecc` WS8 predictive logprob surprise (PRD §6 #2 resolved by IMPLEMENTING it, opt-in;
+  1-exp(mean logprob) fused as max(lexical, predictive); zero extra embedding passes; the
+  paraphrased-update dead zone now stores; Ollama logprobs support probed live). `7a3a777` WS13
+  preference path — **the firewall fired in anger:** the always-on form regressed Gate A
+  (hash 07760396, precision 0.79→0.74, contradiction 1.00→0.90) because preference verbs fire on
+  ordinary diagnostic observations; per the pre-registered protocol it shipped OPT-IN
+  (extract_preferences=True + schema-driven planner gate), Gate A re-run byte-identical. Every
+  commit: own Opus reviewer pass + pytest/ruff/mypy + external Gate A. Integration pattern that
+  worked: implementers in manual `git worktree add ... HEAD` worktrees (2 parallel max),
+  reviewers adversarial-by-instruction, orchestrator re-verifies + applies diffs with
+  `git apply -3` + re-runs both gates before each commit.
 - 2026-07-09 — **Tier-1 production hardening (4 reviewed commits on `claude/improvements-tier1-3`).**
   New session plan approved (user-scoped to Tiers 1-3 of the 16-workstream improvement plan in
   `~/.claude/plans/go-through-the-entire-structured-sparrow.md`; Tier-4 credibility runs + Tier-5
