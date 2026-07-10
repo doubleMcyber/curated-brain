@@ -4,7 +4,15 @@
 > session can resume with full context. Companion roadmap (detail + rationale):
 > `~/.claude/plans/cosmic-watching-giraffe.md`.
 
-Last updated: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
+Last updated: 2026-07-09 (Tier-1 production hardening SHIPPED on `claude/improvements-tier1-3`,
+4 reviewer-passed commits, Gate A hash 673a25c7 byte-identical throughout: WS1 frozen `CBConfig`
+exposing the tuning constants (dead-knob + SSOT reviewer findings fixed); WS2 in-repo
+determinism-hash anchor test + CI coverage + weekly CB_SLOW lane; WS3 RLock thread-safety on
+CuratedBrain/NamespacedMemory (README concurrency contract); WS4 provider HTTP-failure logging +
+embed_batch chunking + opt-in retries. Session plan: Tiers 1-3 of
+`~/.claude/plans/go-through-the-entire-structured-sparrow.md` (13 workstreams; compute-heavy runs
+need explicit user go-ahead). Prior line below.)
+Prior: 2026-07-07 (Distinct-dated extraction: SHIPPED the library half, MEASURED+REVERTED
 the benchmark half. NEW `curated_brain/dates.py` deterministic offline event-date resolver +
 opt-in `HeuristicExtractor(resolve_dates=True)` → facts get their TRUE valid_from ("moved two
 months ago" → 2 months before the session, not the session date): a real bi-temporal correctness
@@ -575,6 +583,32 @@ hygiene, deterministic snapshot/restore, fuzz+soak, no unsafe deserialization, b
 cost metrics, the 1e5 load bar, an honest README. PyPI upload = maintainer-token only.
 
 ## CHANGELOG OF THIS FILE
+- 2026-07-09 — **Tier-1 production hardening (4 reviewed commits on `claude/improvements-tier1-3`).**
+  New session plan approved (user-scoped to Tiers 1-3 of the 16-workstream improvement plan in
+  `~/.claude/plans/go-through-the-entire-structured-sparrow.md`; Tier-4 credibility runs + Tier-5
+  release cut deferred; every compute-heavy run needs an explicit user go-ahead). Landed, each
+  with its own Opus reviewer pass + full gate (pytest/ruff/mypy) + external Gate A re-run
+  (hash 673a25c7 byte-identical, precision 0.79 / contradiction 1.00 / staleness 0.00 unchanged):
+  (1) `99aa646` WS1 frozen `CBConfig` — typed config exposing max_context_items,
+  free_dedup_threshold, fuse weights (new W_REL/W_REC/W_IMP constants in retrieval.py),
+  half_life_seconds, gate params, vector w_sem/w_lex/overfetch; explicit ctor args win; reviewer
+  caught a dead `cluster_threshold` knob (removed) + undocumented restore-vs-config semantics
+  (documented: snapshots carry data, not tuning; the gate restores from the snapshot).
+  (2) `459312f` WS2 in-repo determinism anchor — `tests/test_determinism_hash.py` pins sha256
+  over a fixed seed-42 workload's snapshot() + query outputs (the Gate A anchor finally travels
+  with the repo); CI gains --cov + a weekly CB_SLOW schedule lane (reviewer caught that the lane
+  needed `[scale]` to actually run the hnswlib load test — fixed). NOTE: the built-in agent
+  worktree isolation branches from stale `main` (0b717fe) — pins had to be recomputed on HEAD;
+  use manual `git worktree add ... HEAD` for parallel implementers.
+  (3) `e600414` WS3 RLock — every CuratedBrain public method (AST-verified pure code-move into
+  _private helpers) + NamespacedMemory registry; lock never serialized; README concurrency
+  contract (thread-safe in-process, single-writer cross-process; namespaces stay concurrent).
+  (4) `df8812b` WS4 provider robustness — WARNING on HTTP failure (no secrets, probed
+  adversarially), embed_batch batch_size=128 chunking (wire-identical for small inputs),
+  retries=0-default bounded retry. Gate now 234 passed / 5 skipped. Environment: Ollama 0.30.11
+  serves logprobs on /v1/chat/completions (probed live) → WS8 logprob-surprise is feasible
+  locally; python3 is a pyenv 3.11.9 shim WITHOUT the dev stack — pin `python3.12` (3.12.7) for
+  all gates. In flight: WS5 SQLite journal store, WS10 n-hop planner.
 - 2026-07-07 — **Distinct-dated extraction: SHIPPED the library correctness half, measured +
   REVERTED the benchmark half (2nd temporal null).** Followed the pre-registered split "ship the
   surely-good part, measure the uncertain part."
