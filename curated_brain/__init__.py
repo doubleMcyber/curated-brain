@@ -35,6 +35,7 @@ from curated_brain.providers import (
     TransformersLLM,
 )
 from curated_brain.store import SqliteStore
+from curated_brain.surprise import PredictiveSurprise, SurpriseGate
 
 try:
     __version__ = _pkg_version("curated-brain")
@@ -49,6 +50,8 @@ __all__ = [
     "NamespacedMemory",
     "Pricing",
     "SqliteStore",
+    "SurpriseGate",
+    "PredictiveSurprise",
     "resolve_first_person",
     # frozen-model seams: protocols, deterministic fakes (test doubles), real providers
     "Embedder",

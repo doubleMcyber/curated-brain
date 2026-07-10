@@ -205,6 +205,29 @@ retriever.cb.write("Erin lives in Vienna.", session_id="s", timestamp=0.0)
 nodes = retriever.retrieve("Where does Erin live?")    # standard LlamaIndex Retriever API
 ```
 
+## Predictive (log-prob) surprise (opt-in)
+
+The default gate scores surprise as lexical novelty (`1 − max cosine` to the store) plus a
+contradiction override. That leaves a dead zone: a paraphrase of a known memory with a buried
+update reads as a near-duplicate, so the gate reinforces or discards it and the update is lost.
+
+Predictive surprise treats surprise as prediction error. It asks an LLM for the per-token
+log-probabilities of the observation given its nearest stored memories, then maps the mean
+token logprob to a `0..1` score (`1 − exp(mean_logprob)`, monotone: less predictable → higher).
+It fuses with the lexical signal by `max`, so an unpredictable update still clears the gate
+even when the words are familiar. It is off by default; pass `surprise_llm=` to enable it.
+
+```python
+from curated_brain import CuratedBrain, OpenAICompatLLM
+
+# local Ollama serves logprobs on its OpenAI-compatible endpoint
+llm = OpenAICompatLLM(base_url="http://localhost:11434/v1", model="qwen2.5:7b")
+cb = CuratedBrain(surprise_llm=llm)   # costs one LLM call per gated write
+```
+
+Enabling it adds one LLM call per write (metered as `metrics()["cost"]["surprise_calls"]`).
+With `surprise_llm=None` the write path is byte-identical to the default gate.
+
 ## How it works
 
 | Layer | Module |

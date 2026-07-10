@@ -283,3 +283,24 @@ class OpenAICompatLLM:
                 "max_tokens": self.max_tokens, "temperature": self.temperature}
         data = self._request("/chat/completions", body)
         return data["choices"][0]["message"]["content"].strip()
+
+    def complete_with_logprobs(self, prompt: str) -> tuple[str, list[float]]:
+        """Completion plus the per-token log-probabilities the model assigned to the tokens
+        it emitted, via the OpenAI ``logprobs`` field (local Ollama serves these). Returns
+        ``(text, logprobs)`` where ``logprobs[i]`` is the natural-log probability of the i-th
+        generated token — used by :class:`~curated_brain.surprise.PredictiveSurprise` to turn
+        predictability into a surprise score. The text is NOT stripped: it is returned as
+        emitted so it stays aligned with the token list. Empty ``logprobs`` is valid (a model
+        that returned no logprobs) and callers must handle it."""
+        body = {"model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": self.max_tokens, "temperature": self.temperature,
+                "logprobs": True}
+        data = self._request("/chat/completions", body)
+        choice = data["choices"][0]
+        text = choice["message"]["content"]
+        content = (choice.get("logprobs") or {}).get("content") or []
+        # A null logprob value inside a token entry (seen from misbehaving proxies) is
+        # skipped rather than crashing — the estimator treats missing values as absent.
+        logprobs = [float(lp) for tok in content if (lp := tok.get("logprob")) is not None]
+        return text, logprobs

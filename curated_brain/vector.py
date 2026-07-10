@@ -358,6 +358,16 @@ class VectorTier:
         key, score = ranked[0]
         return self.meta[key], score
 
+    def nearest_k(self, embedding: np.ndarray, k: int) -> list[tuple[VectorRecord, float]]:
+        """The ``k`` most-similar stored records for a PRECOMPUTED embedding (no re-embed),
+        most-similar first. Used to source predictive-surprise context from the same vector
+        the write path already computed for novelty — so it adds no embedding pass."""
+        if k <= 0:
+            return []
+        emb = np.asarray(embedding, dtype=np.float64)
+        ranked = self.index.topk(emb, k) if hasattr(self.index, "topk") else self.index.rank(emb)
+        return [(self.meta[key], score) for key, score in ranked[:k]]
+
     def reembed(self, new_embedder) -> int:
         """Re-embed every stored record's text under ``new_embedder`` (model upgrade,
         PRD §12). The index is rebuilt at the new dimensionality; record metadata and keys

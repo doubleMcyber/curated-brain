@@ -37,7 +37,7 @@ from curated_brain.models import (
 from curated_brain.resolve import EntityResolver
 from curated_brain.retrieval import Planner, fuse, render_fact
 from curated_brain.structured import StructuredTier
-from curated_brain.surprise import REINFORCE, STORE, SurpriseGate
+from curated_brain.surprise import REINFORCE, STORE, PredictiveSurprise, SurpriseGate
 from curated_brain.util import (
     count_tokens,
     from_jsonable,
@@ -168,7 +168,8 @@ class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None, max_context_items: int | None = None,
-                 summarizer=None, pricing=None, config: CBConfig | None = None,
+                 summarizer=None, surprise_llm=None, pricing=None,
+                 config: CBConfig | None = None,
                  index_factory=None, ann_path: str | None = None) -> None:
         # Coarse-grained reentrant lock: every public entry point acquires it, so all state
         # reads/mutations serialize within one process. RLock (not Lock) because public methods
@@ -226,6 +227,12 @@ class CuratedBrain(MemoryBackend):
         # real one-sentence summary instead of the most-reinforced member verbatim (PRD §8
         # "cluster & summarize"). Default None keeps consolidation model-free + deterministic.
         self.summarizer = summarizer
+        # Optional predictive (log-prob) surprise (PRD §6 #2): an LLM exposing
+        # complete_with_logprobs. When set, the write gate fuses lexical novelty with the
+        # model's prediction error on the observation given its nearest memories, catching the
+        # paraphrased-update dead zone. Default None keeps the gate model-free + byte-identical.
+        self._predictive = (PredictiveSurprise(surprise_llm, k_context=self._max_ctx)
+                            if surprise_llm is not None else None)
         # Optional Pricing (token→$): when set, metrics()["cost"]["estimated_usd"] reports the
         # dollar cost of the metered hot-path tokens. Default None → cost stays token-only.
         self.pricing = pricing
@@ -323,10 +330,21 @@ class CuratedBrain(MemoryBackend):
         nearest = self.vector.nearest(embedding)
         max_cos = max(0.0, min(1.0, nearest[1])) if nearest else 0.0
         novelty = 1.0 - max_cos
+        # Opt-in predictive (log-prob) surprise: fuse the lexical novelty with the model's
+        # prediction error on this observation given its nearest-k stored memories. Context
+        # comes from the SAME embedding already computed above (nearest_k, no extra embed
+        # pass). Fusion is max — a paraphrase with low lexical novelty but an unpredictable
+        # buried update still clears the gate. Default None -> novelty is unchanged.
+        novelty_effective = novelty
+        if self._predictive is not None:
+            ctx = [r.text for r, _ in self.vector.nearest_k(embedding, self._predictive.k_context)]
+            predictive = self._predictive.score(observation, ctx)
+            self._cost["surprise_calls"] += 1
+            novelty_effective = max(novelty, predictive)
         contradiction = self._is_contradiction(fact)
-        decision = self.gate.decide(novelty, contradiction=contradiction)
+        decision = self.gate.decide(novelty_effective, contradiction=contradiction)
         self._decisions[decision] += 1
-        surprise = 1.0 if contradiction else novelty
+        surprise = 1.0 if contradiction else novelty_effective
         # Write-decision trace (the Pillar-B selectivity signal). Content is NOT logged — only
         # the decision + scores — so no observation text/PII reaches the log stream.
         logger.debug("write decision=%s novelty=%.3f contradiction=%s session=%s",
@@ -842,7 +860,7 @@ class CuratedBrain(MemoryBackend):
         # re-embeds (amortized maintenance) and latency (wall-clock — excluded by design to
         # keep the core deterministic) are intentionally not metered here.
         self._cost = {"embed_calls": 0, "embed_tokens": 0, "extract_calls": 0,
-                      "queries": 0, "context_tokens_served": 0}
+                      "surprise_calls": 0, "queries": 0, "context_tokens_served": 0}
 
     @property
     def _entities(self) -> set[str]:
@@ -947,7 +965,7 @@ class CuratedBrain(MemoryBackend):
         # so reset them — otherwise metrics() would report counts unrelated to the snapshot.
         self._decisions = {"stored": 0, "reinforced": 0, "discarded": 0}
         self._cost = {"embed_calls": 0, "embed_tokens": 0, "extract_calls": 0,
-                      "queries": 0, "context_tokens_served": 0}
+                      "surprise_calls": 0, "queries": 0, "context_tokens_served": 0}
 
     def save(self, path: str) -> None:
         """Durably persist the whole store to ``path`` (survives a process restart). Thin,

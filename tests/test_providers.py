@@ -30,6 +30,7 @@ from curated_brain.providers import (
     SentenceTransformerEmbedder,
     TransformersLLM,
 )
+from curated_brain.surprise import PredictiveSurprise
 
 LIVE = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("sentence_transformers")
 LIVE_LLM = os.environ.get("CB_LIVE") == "1" and importlib.util.find_spec("transformers")
@@ -94,6 +95,72 @@ def test_openai_compat_llm_offline():
     assert seen["path"] == "/chat/completions"
     assert seen["body"]["messages"] == [{"role": "user", "content": "Where?"}]
     assert seen["body"]["temperature"] == 0.0  # greedy by default, for reproducibility
+
+
+def test_openai_compat_llm_logprobs_wire_format_and_parsing():
+    # POST carries `"logprobs": true`; we read choices[0].logprobs.content[*].logprob in order.
+    seen = {}
+
+    def fake_post(path, body):
+        seen.update(path=path, body=body)
+        return {"choices": [{
+            "message": {"content": " lives in Vienna"},
+            "logprobs": {"content": [{"token": " lives", "logprob": -0.1},
+                                     {"token": " in", "logprob": -0.2},
+                                     {"token": " Vienna", "logprob": -0.3}]}}]}
+
+    llm = OpenAICompatLLM("qwen2.5:7b", post=fake_post)
+    text, lps = llm.complete_with_logprobs("Given ... Text: Erin lives in Vienna")
+    assert seen["path"] == "/chat/completions"
+    assert seen["body"]["logprobs"] is True
+    assert text == " lives in Vienna"  # NOT stripped: stays aligned with the token list
+    assert lps == [-0.1, -0.2, -0.3]
+
+
+def test_openai_compat_llm_logprobs_absent_is_empty_list():
+    # A model that returns no logprobs block must yield [] (the estimator treats that as
+    # "no predictive signal"), never crash on a missing key.
+    def fake_post(path, body):
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    _text, lps = OpenAICompatLLM("m", post=fake_post).complete_with_logprobs("q")
+    assert lps == []
+
+
+class _CannedLogprobLLM:
+    """Deterministic logprob LLM: returns a fixed per-token logprob list regardless of prompt.
+    Higher logprobs (closer to 0) = more predictable = lower surprise."""
+
+    def __init__(self, logprobs):
+        self._lps = list(logprobs)
+
+    def complete_with_logprobs(self, prompt):
+        return "", list(self._lps)
+
+
+def test_predictive_surprise_is_monotone_in_predictability():
+    # Confidently predicted continuation (logprobs near 0) -> low surprise; an unpredictable
+    # one (very negative logprobs) -> high surprise. Both in 0..1.
+    predictable = PredictiveSurprise(_CannedLogprobLLM([-0.01, -0.02, -0.01]))
+    surprising = PredictiveSurprise(_CannedLogprobLLM([-4.0, -5.0, -6.0]))
+    lo = predictable.score("obs", ["ctx"])
+    hi = surprising.score("obs", ["ctx"])
+    assert 0.0 <= lo < hi <= 1.0
+    assert lo < 0.05 and hi > 0.9
+
+
+def test_predictive_surprise_empty_logprobs_is_zero():
+    # No logprobs -> no signal -> 0.0 (fuses as a no-op via max with lexical novelty).
+    assert PredictiveSurprise(_CannedLogprobLLM([])).score("obs", ["ctx"]) == 0.0
+
+
+def test_predictive_surprise_prompt_is_pure_function():
+    # The scored prompt is a deterministic function of (observation, nearest-k context) —
+    # no timestamps, no randomness — so the score is reproducible.
+    ps = PredictiveSurprise(_CannedLogprobLLM([-1.0]), k_context=2)
+    p1 = ps.prompt("Erin moved", ["a", "b", "c"])
+    p2 = ps.prompt("Erin moved", ["a", "b", "c"])
+    assert p1 == p2 == "Given these known memories: a b. Text: Erin moved"  # k_context truncates
 
 
 def test_openai_compat_embedder_drives_the_pipeline():
