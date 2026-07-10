@@ -45,6 +45,13 @@ class CBConfig:
     w_imp: float = W_IMP
     half_life_seconds: float = HALF_LIFE_SECONDS
 
+    # QUERY-side fuzzy entity fallback (opt-in). None = off, today's behavior byte-identical.
+    # When set to a difflib cutoff (e.g. 0.85), a question naming no exact known entity may
+    # match a close variant (typo/diminutive); it never overrides an exact match and fails
+    # closed on ambiguity. WRITE-side resolution stays exact-only (see resolve.py) — a false
+    # merge on ingest corrupts the store, whereas a query-time miss only costs one answer.
+    fuzzy_entity_cutoff: float | None = None
+
     # Surprise gate (surprise.SurpriseGate defaults).
     budget: float = _GATE_DEFAULTS["budget"]
     theta0: float = _GATE_DEFAULTS["theta"]

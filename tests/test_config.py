@@ -81,6 +81,11 @@ def test_cbconfig_is_frozen():
         cfg.max_context_items = 99  # type: ignore[misc]
 
 
+# The fuzzy entity cutoff defaults to None (off) and is threaded into the planner via query().
+def test_fuzzy_entity_cutoff_defaults_off():
+    assert CBConfig().fuzzy_entity_cutoff is None
+
+
 # The gate ctor arg still takes precedence over the config's gate knobs.
 def test_explicit_gate_wins_over_config():
     from curated_brain.surprise import SurpriseGate

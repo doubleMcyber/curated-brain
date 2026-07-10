@@ -11,13 +11,18 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from curated_brain.models import Fact
-from curated_brain.util import tokenize
+from curated_brain.util import _STOP, tokenize
+
+# Question tokens shorter than this are skipped by the fuzzy entity fallback: a 1-2 char token
+# is too weak a signal to trust an edit-distance match against (it would pull junk).
+_FUZZY_MIN_TOKEN_LEN = 3
 
 # Keyword -> predicate. Matched against the question's token set.
 PRED_KEYWORDS: dict[str, list[str]] = {
@@ -53,9 +58,14 @@ class Planner:
     def plan(self, question: str, *, entities: set[str],
              predicates: frozenset[str] = frozenset(),
              relation_preds: frozenset[str] = frozenset(),
-             session_ts: dict[int, float]) -> QueryPlan:
+             session_ts: dict[int, float],
+             fuzzy_cutoff: float | None = None) -> QueryPlan:
         toks = set(tokenize(question, drop_stop=False))
         entity = next((e for e in sorted(entities) if e in toks), None)
+        # Opt-in QUERY-side fuzzy fallback: only when no EXACT entity matched and a cutoff is
+        # configured. Never overrides an exact match; fails closed on any ambiguity.
+        if entity is None and fuzzy_cutoff is not None:
+            entity = self._fuzzy_entity(toks, entities, fuzzy_cutoff)
 
         # Schema-driven FIRST: a predicate ACTUALLY STORED whose non-stop content tokens all
         # appear in the question is ground truth about what the store can answer, so it
@@ -106,6 +116,30 @@ class Planner:
 
         return QueryPlan(entity=entity, predicate=predicate, hops=hops, as_of=as_of,
                          open_ended=entity is None or predicate is None)
+
+    @staticmethod
+    def _fuzzy_entity(toks: set[str], entities: set[str], cutoff: float) -> str | None:
+        """A close known-entity variant for a typo'd/diminutive question token (opt-in).
+
+        Deterministic (stdlib ``difflib``, sorted iteration). For each question token (skipping
+        short/stop-words) it finds close matches among the sorted known entities at ``cutoff``.
+        Accepts ONLY if all qualifying tokens resolve to exactly one distinct entity — any
+        ambiguity (one token matching two entities, or two tokens resolving to two different
+        entities) fails closed to None; two tokens naming the SAME entity still resolve.
+        A false match is worse than no match on the query path."""
+        known = sorted(entities)
+        resolved: set[str] = set()  # distinct entities matched, across all tokens
+        for t in sorted(toks):
+            if len(t) < _FUZZY_MIN_TOKEN_LEN or t in _STOP:
+                continue
+            close = difflib.get_close_matches(t, known, n=2, cutoff=cutoff)
+            if len(close) > 1:
+                return None  # this token is ambiguous between two entities -> fail closed
+            if close:
+                resolved.add(close[0])
+                if len(resolved) > 1:
+                    return None  # two different tokens resolved to different entities
+        return next(iter(resolved), None)
 
     @staticmethod
     def _possessive_chain(question: str, entity: str, preds: list[str],

@@ -488,7 +488,8 @@ class CuratedBrain(MemoryBackend):
                              f"got {window!r}")
         pred_vocab, relation_preds, (stale_rids, stale_pairs) = self._derived_state()
         plan = self.planner.plan(question, entities=self._entities, predicates=pred_vocab,
-                                 relation_preds=relation_preds, session_ts=self._session_ts)
+                                 relation_preds=relation_preds, session_ts=self._session_ts,
+                                 fuzzy_cutoff=self.config.fuzzy_entity_cutoff)
         # Entity resolution: map the matched entity token to its canonical subject key, so a
         # question naming "Erin" or "Ms. Smith" reaches the "erin smith" facts (identity on the
         # synthetic harness's single-token names).

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from curated_brain.backend import CuratedBrain
 from curated_brain.baselines import LongContext, NaiveRAG, NoMemory
+from curated_brain.config import CBConfig
 from curated_brain.dataset import generate
 from curated_brain.eval import candidates_for, correct, extract_value
-from curated_brain.retrieval import fuse
+from curated_brain.retrieval import Planner, fuse
 from curated_brain.vector import VectorRecord
 
 
@@ -401,3 +402,73 @@ def test_full_supersede_filter_in_core_no_stale_in_context():
                                     "object": obj}})
     ctx = cb.query("What is Priya's mailing address?", session_id="q", timestamp=2.0).context
     assert "Madrid" in ctx and "Lisbon" not in ctx  # current surfaced, stale filtered in core
+
+
+# ------------------------------------------------- query-side fuzzy entity fallback ---
+def _alice_email_brain():
+    cb = CuratedBrain(seed=0)
+    cb.write("Alice's email is alice@x.com.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "email",
+                                "object": "alice@x.com"}})
+    return cb
+
+
+def test_fuzzy_off_by_default_typo_yields_no_entity():
+    # (a) With no cutoff configured, a typo'd name matches no entity — exactly as today.
+    cb = _alice_email_brain()
+    plan = cb.planner.plan("What is Alise's email?", entities=cb._entities,
+                           session_ts=cb._session_ts)
+    assert plan.entity is None and plan.open_ended
+
+
+def test_fuzzy_on_resolves_typo_end_to_end():
+    # (b) With a cutoff set, a typo'd name ('Alise') resolves to the stored 'alice' and the
+    # store surfaces alice's fact — end-to-end through CuratedBrain(config=...).query.
+    cb = CuratedBrain(seed=0, config=CBConfig(fuzzy_entity_cutoff=0.8))
+    cb.write("Alice's email is alice@x.com.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "email",
+                                "object": "alice@x.com"}})
+    ctx = cb.query("What is Alise's email?", session_id="q", timestamp=1.0).context
+    assert "alice@x.com" in ctx
+
+
+def test_fuzzy_fails_closed_on_ambiguity():
+    # (c) A token equidistant from TWO entities ('jon' ~ john, joan) must resolve to neither.
+    entities = {"john", "joan"}
+    assert Planner()._fuzzy_entity({"who", "is", "jon"}, entities, 0.8) is None
+    # And end-to-end: no resolution -> no structured backstop line for either.
+    cb = CuratedBrain(seed=0, config=CBConfig(fuzzy_entity_cutoff=0.8))
+    for name in ("John", "Joan"):
+        cb.write(f"{name}'s email is {name.lower()}@x.com.", session_id="s0", timestamp=0.0,
+                 metadata={"fact": {"subject": name, "predicate": "email",
+                                    "object": f"{name.lower()}@x.com"}})
+    plan = cb.planner.plan("What is Jon's email?", entities=cb._entities,
+                           session_ts=cb._session_ts, fuzzy_cutoff=0.8)
+    assert plan.entity is None
+
+
+def test_fuzzy_on_does_not_override_exact_match():
+    # (d) When an EXACT entity is present the fuzzy path never runs; the exact match stands.
+    cb = CuratedBrain(seed=0, config=CBConfig(fuzzy_entity_cutoff=0.8))
+    cb.write("Alice's email is alice@x.com.", session_id="s0", timestamp=0.0,
+             metadata={"fact": {"subject": "Alice", "predicate": "email",
+                                "object": "alice@x.com"}})
+    cb.write("Alicia's email is alicia@x.com.", session_id="s1", timestamp=1.0,
+             metadata={"fact": {"subject": "Alicia", "predicate": "email",
+                                "object": "alicia@x.com"}})
+    plan = cb.planner.plan("What is Alice's email?", entities=cb._entities,
+                           session_ts=cb._session_ts, fuzzy_cutoff=0.8)
+    assert plan.entity == "alice"  # exact, not the fuzzy neighbour alicia
+
+
+def test_fuzzy_write_path_unaffected_snapshots_identical():
+    # (e) Fuzzy is QUERY-side only: a fuzzy-off and a fuzzy-on brain given IDENTICAL writes
+    # produce byte-identical snapshots (resolve.py / the write path is untouched).
+    ds = generate(seed=0)
+    off = CuratedBrain(seed=0)
+    on = CuratedBrain(seed=0, config=CBConfig(fuzzy_entity_cutoff=0.8))
+    for o in ds.observations:
+        for be in (off, on):
+            be.write(o.content, session_id=o.session_id, timestamp=o.wall_ts,
+                     metadata={"fact": o.fact} if o.fact else None)
+    assert on.snapshot() == off.snapshot()
