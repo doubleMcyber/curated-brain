@@ -35,7 +35,15 @@ from curated_brain.models import (
     WriteReceipt,
 )
 from curated_brain.resolve import EntityResolver
-from curated_brain.retrieval import Planner, fuse, render_fact
+from curated_brain.retrieval import (
+    PREFERENCE_PREFIX as _PREFERENCE_PREFIX,
+)
+from curated_brain.retrieval import (
+    Planner,
+    fuse,
+    render_fact,
+    render_preference,
+)
 from curated_brain.structured import StructuredTier
 from curated_brain.surprise import REINFORCE, STORE, PredictiveSurprise, SurpriseGate
 from curated_brain.util import (
@@ -549,7 +557,23 @@ class CuratedBrain(MemoryBackend):
         citations: list[Citation] = []
 
         hit = False
-        if not plan.open_ended and plan.hops and cent is not None:
+        if plan.preference and cent is not None:
+            # Preference intent: surface EVERY open preference:<topic> fact for the entity
+            # (capped at the context budget), reusing the structured tier's open-fact listing
+            # (predicates_for) rather than a bespoke scan. Answers both "what does Erin like?"
+            # (aggregate) and "what is Erin's favorite cuisine?" (the matching topic is present).
+            for pred in self.structured.predicates_for(cent):
+                if not pred.startswith(_PREFERENCE_PREFIX):
+                    continue
+                if len(lines) >= self._max_ctx:
+                    break
+                f = self.structured.resolve(cent, pred, plan.as_of)
+                if f is not None:
+                    lines.append(render_preference(f))
+                    citations.append(Citation(record_id=f.id, provenance=f.provenance,
+                                              valid_interval=(f.valid_from, f.valid_to)))
+                    hit = True
+        if not plan.preference and not plan.open_ended and plan.hops and cent is not None:
             # Multi-hop: surface the final answer line, but cite EVERY fact in the chain so
             # the whole support set is attributable (not just the last hop). cent is non-None
             # here — a non-open-ended plan always names an entity (normalize() needs a str).

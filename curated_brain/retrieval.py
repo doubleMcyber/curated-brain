@@ -36,6 +36,17 @@ _RELATION_PREDS = {"manager"}
 _SESSION_RE = re.compile(r"session\s+(\d+)")
 _ASOF_RE = re.compile(r"as[-\s]of|believ|back then|at the time")
 
+# Preference-intent question tokens. A question carrying any of these asks about what an
+# entity likes/prefers, which the "preference:<topic>" fact family answers by aggregation
+# rather than by a single predicate lookup (see CuratedBrain._query). The predicate family's
+# own prefix ("preference") is included so a stored-vocab match still triggers the intent.
+PREFERENCE_KEYWORDS = frozenset(
+    "like likes liked love loves enjoy enjoys prefer prefers preferred preference "
+    "favorite favourite favor favors hate hates dislike dislikes".split())
+# The predicate prefix the extractor stamps onto every preference fact (kept in sync by
+# string, not import, to avoid a retrieval->extraction dependency).
+PREFERENCE_PREFIX = "preference:"
+
 HALF_LIFE_SECONDS = 30 * 86_400.0  # recency decays with a 30-day half-life
 
 # Fusion weights (Generative-Agents-style relevance × recency × importance). Single source
@@ -52,6 +63,11 @@ class QueryPlan:
     hops: list[str] | None
     as_of: float | None
     open_ended: bool
+    # Preference-intent: the question asks what the entity likes/prefers, answered by
+    # aggregating the "preference:<topic>" fact family for the entity rather than resolving a
+    # single predicate. Only set for a preference question naming a known entity; a default of
+    # False keeps every non-preference plan (and its rendering) byte-identical.
+    preference: bool = False
 
 
 class Planner:
@@ -114,8 +130,17 @@ class Planner:
         if m and _ASOF_RE.search(ql):
             as_of = session_ts.get(int(m.group(1)))
 
+        # Preference intent: a preference-keyword question naming a known entity routes to the
+        # preference:<topic> aggregation — but ONLY when preference facts are actually stored
+        # (schema-driven, like the predicate matching above). With nothing to aggregate, a
+        # keyword question keeps its exact old plan, so stores that never opted into
+        # preference extraction stay byte-identical end to end.
+        preference = (entity is not None and bool(toks & PREFERENCE_KEYWORDS)
+                      and any(p.startswith(PREFERENCE_PREFIX) for p in predicates))
+
         return QueryPlan(entity=entity, predicate=predicate, hops=hops, as_of=as_of,
-                         open_ended=entity is None or predicate is None)
+                         open_ended=entity is None or predicate is None,
+                         preference=preference)
 
     @staticmethod
     def _fuzzy_entity(toks: set[str], entities: set[str], cutoff: float) -> str | None:
@@ -182,6 +207,20 @@ class Planner:
                 break
             i += 1
         return chain
+
+
+def render_preference(fact: Fact) -> str:
+    """Compact, readable line for one open preference fact. A polarity-encoded object
+    ("like"/"dislike") reads as "<subject> likes/dislikes <topic>"; any other object is a
+    category value ("<subject>'s favorite <category> is <value>"). Topic/category is the part
+    after the "preference:" prefix."""
+    topic = fact.predicate[len(PREFERENCE_PREFIX):] if fact.predicate.startswith(
+        PREFERENCE_PREFIX) else fact.predicate
+    if fact.object == "like":
+        return f"{fact.subject} likes {topic}."
+    if fact.object == "dislike":
+        return f"{fact.subject} dislikes {topic}."
+    return f"{fact.subject}'s favorite {topic} is {fact.object}."
 
 
 def render_fact(plan: QueryPlan, fact: Fact) -> str:
