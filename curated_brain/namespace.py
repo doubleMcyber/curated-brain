@@ -50,6 +50,15 @@ class NamespacedMemory:
                 self._spaces[namespace] = self._factory()
             return self._spaces[namespace]
 
+    def put(self, namespace: str, brain: CuratedBrain) -> None:
+        """Install a pre-built brain under ``namespace`` (e.g. one restored/attached elsewhere),
+        replacing any existing store. Lets a caller seed a namespace from its own configured
+        CuratedBrain instead of the factory's."""
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError(f"namespace must be a non-empty str, got {namespace!r}")
+        with self._lock:
+            self._spaces[namespace] = brain
+
     def namespaces(self) -> list[str]:
         with self._lock:
             return sorted(self._spaces)
