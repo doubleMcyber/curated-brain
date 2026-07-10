@@ -29,6 +29,11 @@ class Cassette:
         self.dim = dim
         self.embed: dict[str, str] = {}     # hash -> hex(float64 vector)
         self.complete: dict[str, str] = {}  # hash -> completion text
+        # Logprob completions record under a DISTINCT namespace (keyed by the same prompt
+        # hash) so a plain complete() and a complete_with_logprobs() of the same prompt never
+        # collide: value is [text, [logprob, ...]], with float64-hex logprobs for byte-stable
+        # replay exactly like the embed vectors.
+        self.complete_lp: dict[str, list] = {}  # hash -> [text, hex(float64 logprobs)]
 
     @staticmethod
     def _key(text: str) -> str:
@@ -36,13 +41,15 @@ class Cassette:
 
     def to_dict(self) -> dict:
         return {"embed_model_id": self.embed_model_id, "dim": self.dim,
-                "embed": self.embed, "complete": self.complete}
+                "embed": self.embed, "complete": self.complete,
+                "complete_lp": self.complete_lp}
 
     @classmethod
     def from_dict(cls, d: dict) -> Cassette:
         c = cls(d.get("embed_model_id", ""), int(d.get("dim", 0)))
         c.embed = dict(d.get("embed", {}))
         c.complete = dict(d.get("complete", {}))
+        c.complete_lp = {k: list(v) for k, v in d.get("complete_lp", {}).items()}
         return c
 
     def save(self, path: str) -> None:
@@ -105,3 +112,22 @@ class CachedLLM:
         out = self.inner.complete(prompt)
         self.cassette.complete[key] = out
         return out
+
+    def complete_with_logprobs(self, prompt: str) -> tuple[str, list[float]]:
+        """Record/replay ``(text, per-token logprobs)`` for the predictive-surprise seam
+        (:class:`~curated_brain.surprise.PredictiveSurprise`). Keyed by the prompt hash in the
+        ``complete_lp`` namespace, distinct from ``complete``; logprobs serialize as float64
+        hex so replay is byte-identical. Replay miss RAISES (same strict contract as embed)."""
+        key = Cassette._key(prompt)
+        hit = self.cassette.complete_lp.get(key)
+        if hit is not None:
+            text, hexlp = hit
+            lps = np.frombuffer(bytes.fromhex(hexlp), dtype=np.float64).tolist()
+            return text, lps
+        if self.inner is None:
+            raise KeyError(
+                f"cassette replay miss for complete_with_logprobs({prompt[:40]!r}…)")
+        text, lps = self.inner.complete_with_logprobs(prompt)
+        hexlp = np.asarray(lps, dtype=np.float64).tobytes().hex()
+        self.cassette.complete_lp[key] = [text, hexlp]
+        return text, list(lps)

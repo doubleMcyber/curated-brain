@@ -228,6 +228,14 @@ cb = CuratedBrain(surprise_llm=llm)   # costs one LLM call per gated write
 Enabling it adds one LLM call per write (metered as `metrics()["cost"]["surprise_calls"]`).
 With `surprise_llm=None` the write path is byte-identical to the default gate.
 
+Honest measurement: on a fixed dead-zone scenario recorded against qwen2.5:7b (2026-07-10,
+see `tests/test_logprob_live_replay.py`), the predictive gate rescued none of five buried
+updates — the same zero as the default gate — because the mean log-prob over a 32-token
+continuation dilutes the surprising update token below the gate threshold. Discard
+selectivity was not degraded. The synthetic mechanism test still passes; the real model does
+not close the dead zone with this mean-logprob mapping, so treat predictive surprise as an
+experimental signal, not a fix.
+
 ## LLM consolidation summaries (opt-in)
 
 Consolidation merges near-duplicate and same-fact episodes into one semantic claim. By default
