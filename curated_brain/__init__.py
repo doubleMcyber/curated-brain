@@ -13,6 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from curated_brain.backend import CuratedBrain, MemoryBackend
+from curated_brain.config import CBConfig
 from curated_brain.extraction import HeuristicExtractor, LLMExtractor, resolve_first_person
 from curated_brain.fakes import DeterministicEmbedder, RuleBasedLLM
 from curated_brain.models import (
@@ -42,6 +43,7 @@ except PackageNotFoundError:  # running from a source checkout without an instal
 __all__ = [
     # core
     "CuratedBrain",
+    "CBConfig",
     "MemoryBackend",
     "NamespacedMemory",
     "Pricing",

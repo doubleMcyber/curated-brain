@@ -194,8 +194,14 @@ _VECTOR_RECORD_REQUIRED = frozenset(
 class VectorTier:
     """Embedded records + metadata-filtered ANN search (PRD §7 step 2)."""
 
-    def __init__(self, embedder, *, index=None) -> None:
+    def __init__(self, embedder, *, index=None, w_sem: float = _W_SEM, w_lex: float = _W_LEX,
+                 overfetch: int = _OVERFETCH) -> None:
         self.embedder = embedder
+        # Hybrid-scoring weights + ANN over-fetch, defaulted to the module constants so the
+        # default tier is byte-identical; a CBConfig can override them via CuratedBrain.
+        self.w_sem = w_sem
+        self.w_lex = w_lex
+        self.overfetch = overfetch
         # Default is the exact, byte-deterministic BruteForceIndex (AC-1). Pass a real ANN
         # backend (HnswIndex) for scale — it exposes ``topk``, which `search`/`nearest` use as
         # a sublinear fast path; snapshot/re-embed remain BruteForce features.
@@ -240,7 +246,7 @@ class VectorTier:
                 return ranked
             # hybrid: re-rank by semantic + lexical BEFORE truncating to k
             return sorted(
-                ((key, _W_SEM * cos + _W_LEX * jaccard(qtext, self.meta[key].text))
+                ((key, self.w_sem * cos + self.w_lex * jaccard(qtext, self.meta[key].text))
                  for key, cos in ranked),
                 key=lambda kc: (-kc[1], kc[0]))
 
@@ -266,7 +272,7 @@ class VectorTier:
             # metadata filters are selective (the k*_OVERFETCH approximate candidates may
             # all fail the filter while matches exist deeper). Escalate the fetch until k
             # survivors are found or the whole live set has been considered.
-            fetch = k * _OVERFETCH
+            fetch = k * self.overfetch
             while True:
                 out = _filtered(_rerank(self.index.topk(qv, fetch)))
                 if len(out) >= k or fetch >= len(self.meta):

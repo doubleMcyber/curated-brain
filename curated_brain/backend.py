@@ -18,6 +18,7 @@ import logging
 import math
 from dataclasses import MISSING
 
+from curated_brain.config import CBConfig
 from curated_brain.consolidation import cluster_by_similarity, representative
 from curated_brain.fakes import DeterministicEmbedder
 from curated_brain.models import (
@@ -40,9 +41,6 @@ from curated_brain.util import (
     tokenize,
 )
 from curated_brain.vector import VectorTier
-
-MAX_CONTEXT_ITEMS = 4  # curated payloads stay tiny (PRD §7: far below long-context)
-FREE_DEDUP_THRESHOLD = 0.85  # only genuine near-duplicate free-text episodes are merged
 
 SNAPSHOT_VERSION = 1
 
@@ -165,15 +163,24 @@ class CuratedBrain(MemoryBackend):
     def __init__(self, embedder: DeterministicEmbedder | None = None, *,
                  dim: int = 256, seed: int = 0, gate: SurpriseGate | None = None,
                  extractor=None, max_context_items: int | None = None,
-                 summarizer=None, pricing=None) -> None:
+                 summarizer=None, pricing=None, config: CBConfig | None = None) -> None:
         self.embedder = embedder or DeterministicEmbedder(dim)
         self.seed = seed
         self.planner = Planner()
-        self._gate_cfg = (gate or SurpriseGate()).to_dict()
-        # Context budget per query. The default (MAX_CONTEXT_ITEMS=4) keeps payloads tiny
-        # (PRD §7) but silently overrode the caller's k — now configurable so an adopter
+        # Frozen tuning config: default CBConfig() re-derives today's constants, so config=None
+        # (and a default config) is a behavioral no-op. An explicit gate/max_context_items ctor
+        # arg still wins over the config field (per-arg precedence).
+        self.config = config or CBConfig()
+        if gate is None:
+            gate = SurpriseGate(budget=self.config.budget, theta0=self.config.theta0,
+                                theta_floor=self.config.theta_floor,
+                                theta_max=self.config.theta_max, lr=self.config.lr)
+        self._gate_cfg = gate.to_dict()
+        # Context budget per query. The default (CBConfig.max_context_items=4) keeps payloads
+        # tiny (PRD §7) but silently overrode the caller's k — now configurable so an adopter
         # asking for more context actually gets it.
-        self._max_ctx = max_context_items if max_context_items is not None else MAX_CONTEXT_ITEMS
+        self._max_ctx = (max_context_items if max_context_items is not None
+                         else self.config.max_context_items)
         if self._max_ctx < 1:
             raise ValueError(f"max_context_items must be >= 1, got {max_context_items!r}")
         # Optional Track-B extractor: when set, facts are derived from raw text for
@@ -484,7 +491,9 @@ class CuratedBrain(MemoryBackend):
                     break
 
         vhits = self.vector.search(question, k=k, t=timestamp, entity=cent, window=window)
-        for it in fuse(vhits, now=timestamp, stale_rids=stale_rids, stale_pairs=stale_pairs):
+        for it in fuse(vhits, now=timestamp, stale_rids=stale_rids, stale_pairs=stale_pairs,
+                       w_rel=self.config.w_rel, w_rec=self.config.w_rec, w_imp=self.config.w_imp,
+                       half_life_seconds=self.config.half_life_seconds):
             if len(lines) >= self._max_ctx:
                 break
             lines.append(it.text)
@@ -607,7 +616,7 @@ class CuratedBrain(MemoryBackend):
         # Free-text episodes: only merge genuine near-duplicates (high threshold avoids
         # collapsing distinct content); keep everything else.
         for cluster in cluster_by_similarity([(self.embedder.embed(r.content), r) for r in free],
-                                             FREE_DEDUP_THRESHOLD):
+                                             self.config.free_dedup_threshold):
             if len(cluster) > 1:
                 new_eps.append(self._merge_to_claim(cluster))
                 dupes_merged += len(cluster) - 1
@@ -707,7 +716,8 @@ class CuratedBrain(MemoryBackend):
         if self.extractor is not None and hasattr(self.extractor, "reset"):
             self.extractor.reset()  # clear any coreference context tied to the old store
         self.structured = StructuredTier()
-        self.vector = VectorTier(self.embedder)
+        self.vector = VectorTier(self.embedder, w_sem=self.config.w_sem,
+                                 w_lex=self.config.w_lex, overfetch=self.config.overfetch)
         self.gate = SurpriseGate.from_dict({**self._gate_cfg, "seen": 0, "stored": 0})
         self._resolver = EntityResolver()  # owns the entity vocabulary (`_entities` reads through)
         self._session_ts = {}
@@ -766,6 +776,9 @@ class CuratedBrain(MemoryBackend):
                           allow_nan=False).encode("utf-8")
 
     def restore(self, blob: bytes) -> None:
+        # Snapshots carry data, not tuning: CBConfig is not persisted, so retrieval/vector
+        # knobs come from THIS brain's config — but the gate's runtime state (thresholds
+        # included) is restored from the snapshot, overriding the config's gate knobs.
         # restore() takes UNTRUSTED bytes (a file, a network blob). Validate structure up
         # front and fail with a clear ValueError, rather than letting a malformed blob crash
         # deep inside with an opaque KeyError/TypeError or splat unexpected fields into a
@@ -791,7 +804,8 @@ class CuratedBrain(MemoryBackend):
         self._ep_by_id = {r.id: r for r in self._episodes}
         self.structured = StructuredTier()
         self.structured.load(state.get("structured", []))
-        self.vector = VectorTier(self.embedder)
+        self.vector = VectorTier(self.embedder, w_sem=self.config.w_sem,
+                                 w_lex=self.config.w_lex, overfetch=self.config.overfetch)
         if state.get("vector"):
             self.vector.load(state["vector"])
         self.gate = SurpriseGate.from_dict(state["gate"]) if state.get("gate") else SurpriseGate()

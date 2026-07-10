@@ -33,6 +33,12 @@ _ASOF_RE = re.compile(r"as[-\s]of|believ|back then|at the time")
 
 HALF_LIFE_SECONDS = 30 * 86_400.0  # recency decays with a 30-day half-life
 
+# Fusion weights (Generative-Agents-style relevance × recency × importance). Single source
+# of truth: `fuse`'s defaults and CBConfig both read these.
+W_REL = 1.0
+W_REC = 0.5
+W_IMP = 0.3
+
 
 @dataclass
 class QueryPlan:
@@ -106,13 +112,14 @@ class FusedItem:
     score: float
 
 
-def _recency(now: float, ts: float) -> float:
-    return 0.5 ** (max(0.0, now - ts) / HALF_LIFE_SECONDS)
+def _recency(now: float, ts: float, half_life_seconds: float = HALF_LIFE_SECONDS) -> float:
+    return 0.5 ** (max(0.0, now - ts) / half_life_seconds)
 
 
 def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
-         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = 1.0,
-         w_rec: float = 0.5, w_imp: float = 0.3, importance: float = 0.5) -> list[FusedItem]:
+         stale_pairs: Sequence[tuple[frozenset[str], frozenset[str]]] = (), w_rel: float = W_REL,
+         w_rec: float = W_REC, w_imp: float = W_IMP, importance: float = 0.5,
+         half_life_seconds: float = HALF_LIFE_SECONDS) -> list[FusedItem]:
     """Rank vector candidates by relevance × recency × importance, dropping any record that
     states a superseded value (supersede-filtering, PRD §7 step 3).
 
@@ -129,7 +136,8 @@ def fuse(vhits, *, now: float, stale_rids: AbstractSet[str] = frozenset(),
         rtoks = set(tokenize(r.text))
         if any(st <= rtoks and vt <= rtoks for st, vt in stale_pairs):
             continue
-        score = w_rel * sim + w_rec * _recency(now, r.wall_ts) + w_imp * importance
+        score = (w_rel * sim + w_rec * _recency(now, r.wall_ts, half_life_seconds)
+                 + w_imp * importance)
         items.append(FusedItem(text=r.text, rid=r.rid, provenance={"session_id": r.session_id},
                                valid_interval=(r.wall_ts, float("inf")), score=score))
     items.sort(key=lambda it: (-it.score, it.rid))
